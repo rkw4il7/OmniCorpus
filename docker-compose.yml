@@ -1,0 +1,30 @@
+# Postgres + pgvector for the Corpus RAG Explorer (root spec.md §9).
+#
+# The `pgvector/pgvector` image bundles the extension binary but does NOT enable
+# it automatically. `scripts/init-db.sql` is mounted into the image's
+# docker-entrypoint-initdb.d so `CREATE EXTENSION IF NOT EXISTS vector;` runs
+# once, the first time the data volume is created. (Spec §7.1.)
+#
+# Bring up:   docker compose up -d
+# Conn str:   postgresql://postgres:postgres@localhost:5432/corpus_rag
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: corpus_rag
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d corpus_rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
