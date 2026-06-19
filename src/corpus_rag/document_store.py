@@ -82,5 +82,8 @@ def build_document_store(
         recreate_table=recreate_table,
     )
 
+    # Defensive only: the store was constructed with `embedding_dimension=
+    # model_dim`, so this cannot fail today. It guards against a future refactor
+    # that derives the store's dimension from a different source.
     assert_dimension_contract(model_dim, store)
     return store

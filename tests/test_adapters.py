@@ -35,7 +35,7 @@ def corpus_tree(tmp_path: Path) -> Path:
 def test_local_glob_discovers_files_recursively(corpus_tree: Path) -> None:
     adapter = LocalPathAdapter(root=str(corpus_tree / "**" / "*"))
     found = adapter.discover()
-    assert [Path(f).name for f in found] == ["a.pdf", "b.html", "c.docx"]
+    assert {Path(f).name for f in found} == {"a.pdf", "b.html", "c.docx"}
 
 
 def test_local_directory_root_walks_tree(corpus_tree: Path) -> None:

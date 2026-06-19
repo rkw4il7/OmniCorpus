@@ -64,6 +64,8 @@ class Settings(BaseSettings):
             raise ValueError("TOP_K must be >= 1")
         if self.embedding_dim is not None and self.embedding_dim < 1:
             raise ValueError("EMBEDDING_DIM, when set, must be >= 1")
+        if not 0.0 <= self.min_score <= 1.0:
+            raise ValueError("MIN_SCORE must be in [0.0, 1.0] (cosine floor)")
         return self
 
 

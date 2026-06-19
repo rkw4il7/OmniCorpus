@@ -9,6 +9,7 @@ Uses the stdlib ``urllib`` to avoid adding an HTTP dependency.
 
 from __future__ import annotations
 
+import urllib.error
 import urllib.request
 
 from haystack.dataclasses import ByteStream
@@ -28,9 +29,16 @@ class UrlAdapter:
         self.timeout = timeout
 
     def discover(self) -> list[Source]:
-        with urllib.request.urlopen(self.url, timeout=self.timeout) as resp:  # noqa: S310
-            data = resp.read()
-            mime_type = resp.headers.get_content_type()
+        try:
+            with urllib.request.urlopen(  # noqa: S310
+                self.url, timeout=self.timeout
+            ) as resp:
+                data = resp.read()
+                mime_type = resp.headers.get_content_type()
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError(
+                f"url adapter failed to fetch {self.url!r}: {exc}"
+            ) from exc
         stream = ByteStream(
             data=data,
             mime_type=mime_type,

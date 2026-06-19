@@ -83,3 +83,10 @@ def test_invalid_embedding_dim_rejected(clean_env) -> None:
     clean_env.setenv("EMBEDDING_DIM", "0")
     with pytest.raises(ValueError):
         _settings()
+
+
+@pytest.mark.parametrize("bad", ["-0.5", "1.5", "2.0"])
+def test_invalid_min_score_rejected(clean_env, bad: str) -> None:
+    clean_env.setenv("MIN_SCORE", bad)
+    with pytest.raises(ValueError, match="MIN_SCORE"):
+        _settings()

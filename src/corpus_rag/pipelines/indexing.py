@@ -59,8 +59,10 @@ def build_indexing_pipeline(
     pipeline.add_component("converter", converter)
     pipeline.add_component("embedder", embedder)
     pipeline.add_component("writer", writer)
-    pipeline.connect("converter", "embedder")
-    pipeline.connect("embedder", "writer")
+    # Explicit socket names: the embedder exposes both `documents` and `meta`
+    # outputs, so auto-connect to the writer is ambiguous in Haystack 2.x.
+    pipeline.connect("converter.documents", "embedder.documents")
+    pipeline.connect("embedder.documents", "writer.documents")
     return pipeline
 
 

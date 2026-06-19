@@ -7,6 +7,8 @@ sources. New origins = new adapter + one registry entry (root ``spec.md`` §3.1)
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from corpus_rag.adapters.base import Source, SourceAdapter
 from corpus_rag.adapters.local_path import LocalPathAdapter
 from corpus_rag.adapters.url import UrlAdapter
@@ -14,7 +16,7 @@ from corpus_rag.settings import SourceConfig
 
 # Builders take a SourceConfig and return a ready SourceAdapter. Each is
 # responsible for validating the fields it needs.
-_REGISTRY: dict[str, callable] = {
+_REGISTRY: dict[str, Callable[[SourceConfig], SourceAdapter]] = {
     "local_path": lambda cfg: LocalPathAdapter(root=cfg.root or ""),
     "url": lambda cfg: UrlAdapter(url=cfg.url or ""),
 }
