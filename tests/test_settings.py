@@ -96,9 +96,27 @@ def test_rerank_defaults(clean_env) -> None:
     s = _settings()
     assert s.rerank_candidates == 20
     assert s.rerank_model_id == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    assert s.llm_timeout == 180
+
+
+def test_rerank_and_timeout_env_overrides(clean_env) -> None:
+    clean_env.setenv("RERANK_CANDIDATES", "30")
+    clean_env.setenv("RERANK_MODEL_ID", "BAAI/bge-reranker-base")
+    clean_env.setenv("LLM_TIMEOUT", "90")
+
+    s = _settings()
+    assert s.rerank_candidates == 30
+    assert s.rerank_model_id == "BAAI/bge-reranker-base"
+    assert s.llm_timeout == 90
 
 
 def test_invalid_rerank_candidates_rejected(clean_env) -> None:
     clean_env.setenv("RERANK_CANDIDATES", "0")
     with pytest.raises(ValueError, match="RERANK_CANDIDATES"):
+        _settings()
+
+
+def test_invalid_llm_timeout_rejected(clean_env) -> None:
+    clean_env.setenv("LLM_TIMEOUT", "0")
+    with pytest.raises(ValueError, match="LLM_TIMEOUT"):
         _settings()

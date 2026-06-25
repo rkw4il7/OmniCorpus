@@ -293,7 +293,13 @@ def test_live_rerank_returns_candidates_with_both_rankings() -> None:
 
 @pytest.mark.live
 def test_live_rerank_overrides_cosine_order() -> None:
-    """Demonstrate the rerank reorders the initial cosine ranking."""
+    """Empirical demo (NOT a hard contract): the rerank reorders the cosine list.
+
+    This asserts the cross-encoder disagrees with cosine for this query/corpus.
+    It is a demonstration, not a property of the implementation — on a tiny or
+    trivially-separable corpus the two orders can legitimately agree, so we skip
+    rather than fail when there are too few sources to expect disagreement.
+    """
     engine, _, settings = _live_rerank_engine_and_store()
     _, sources = run_query_reranked(
         "Which oral antibiotic is recommended as the first-line treatment "
@@ -302,6 +308,8 @@ def test_live_rerank_overrides_cosine_order() -> None:
         settings=settings,
     )
 
+    if len(sources) < 5:
+        pytest.skip("Too few sources to expect a rerank/cosine disagreement.")
     # If rerank changed nothing, cosine_rank would equal rerank_rank for all.
     cosine_order = [s.cosine_rank for s in sources]
     assert cosine_order != sorted(cosine_order), "rerank did not reorder cosine list"

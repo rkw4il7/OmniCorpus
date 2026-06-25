@@ -74,6 +74,9 @@ def build_query_pipeline(
     pipeline.connect("text_embedder.embedding", "retriever.query_embedding")
     pipeline.connect("retriever.documents", "prompt_builder.documents")
     pipeline.connect("prompt_builder.prompt", "generator.prompt")
+    # No explicit warm_up: Pipeline.run() warms its components on first call, so
+    # the first run_query incurs the model cold-start (unlike build_rerank_engine,
+    # which warms eagerly because it drives components directly, not via a Pipeline).
     return pipeline
 
 
