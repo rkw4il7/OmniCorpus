@@ -1,10 +1,11 @@
 """Streamlit front end for the Corpus RAG Explorer (root ``spec.md`` §5).
 
 Single page: a query box runs the grounded query pipeline and renders the query,
-the generated response, and the top-K retrieved source chunks — each as a
-click-to-expand row showing the **verbatim** chunk content, its provenance
-metadata, and similarity score, in the retriever's returned (cosine-ranked)
-order.
+the generated response, and — in rerank order — the chunks that actually grounded
+it (at/above the MIN_SCORE floor) as a single table: ordinal/numeric columns
+(rerank #, cosine #, Δ, scores) on the left and the **verbatim** chunk text on the
+right. Below-threshold candidates that did not contribute are not shown, and no
+internal metadata structure is dumped to the page.
 
 §2A.4 co-rendering: the response is never shown without its ranked, verbatim
 ground-truth sources beside it; on abstention no fabricated clinical claim is
@@ -163,10 +164,6 @@ def _render_ingest_sidebar() -> None:
             st.write(f"- {name} — {n} chunk(s)")
 
 
-def _fmt(score: float | None) -> str:
-    return f"{score:.4f}" if score is not None else "n/a"
-
-
 def main() -> None:
     from corpus_rag.pipelines.query import run_query_reranked
 
@@ -203,72 +200,43 @@ def main() -> None:
     else:
         st.markdown(answer)
 
-    if not sources:
-        st.subheader("Sources (0)")
-        st.info("No source chunks retrieved for this query.")
-        return
-
-    # Split by the grounding floor so the UI never implies a below-threshold chunk
-    # grounded the answer. Only chunks at/above MIN_SCORE are "Sources used"; the
-    # rest are shown separately as retrieval candidates that were NOT used.
+    # Only chunks at/above the MIN_SCORE floor grounded the answer; below-threshold
+    # candidates did not contribute, so they are not displayed.
     from corpus_rag.settings import get_settings
 
     floor = get_settings().min_score
+    grounded = [s for s in sources if floor <= 0.0 or (s.cosine_score or 0.0) >= floor]
 
-    def _is_grounded(rs) -> bool:
-        return floor <= 0.0 or (rs.cosine_score or 0.0) >= floor
+    st.subheader(f"Sources used for grounding ({len(grounded)})")
+    if not grounded:
+        st.info(
+            "No retrieved chunk met the MIN_SCORE grounding floor — the response above abstains."
+        )
+        return
 
-    grounded = [s for s in sources if _is_grounded(s)]
-    below = [s for s in sources if not _is_grounded(s)]
-
-    # Retrieval diagnostics over ALL candidates (how rerank moved each vs cosine).
-    st.markdown(
-        "**Retrieval diagnostics — all candidates** (rerank order). "
-        "`Δ` = places the cross-encoder moved a chunk up (+) / down (−) from its "
-        "cosine rank. `Grounded` = at/above the MIN_SCORE floor."
+    # §2A.4: grounded sources co-rendered with the response, in rerank order.
+    # One table — ordinal/numeric columns left, verbatim chunk text on the right.
+    # `Δ` = places the cross-encoder moved a chunk up (+) / down (−) from cosine.
+    st.caption(
+        "In rerank order. Δ = places the cross-encoder moved a chunk up (+) / "
+        "down (−) from its cosine rank. Chunk text is the verbatim stored source."
     )
     st.dataframe(
         [
             {
                 "Rerank #": s.rerank_rank,
-                "Rerank score": round(s.rerank_score, 4) if s.rerank_score is not None else None,
                 "Cosine #": s.cosine_rank,
-                "Cosine score": round(s.cosine_score, 4) if s.cosine_score is not None else None,
                 "Δ": s.cosine_rank - s.rerank_rank,
-                "Grounded": _is_grounded(s),
-                "Source": first_line(s.document.content),
+                "Rerank score": round(s.rerank_score, 4) if s.rerank_score is not None else None,
+                "Cosine score": round(s.cosine_score, 4) if s.cosine_score is not None else None,
+                "Source": _source_name(s.document.meta),
+                "Chunk text": s.document.content,
             }
-            for s in sources
+            for s in grounded
         ],
         use_container_width=True,
         hide_index=True,
     )
-
-    # §2A.4: the grounded sources are co-rendered with the response.
-    st.subheader(f"Sources used for grounding ({len(grounded)})")
-    if not grounded:
-        st.info(
-            "No retrieved chunk met the MIN_SCORE grounding floor — the response "
-            "above abstains. Below-threshold candidates are listed separately."
-        )
-    for s in grounded:
-        label = (
-            f"#{s.rerank_rank} (cosine #{s.cosine_rank})  ·  "
-            f"rerank {_fmt(s.rerank_score)}  ·  cosine {_fmt(s.cosine_score)}  ·  "
-            f"{first_line(s.document.content)}"
-        )
-        with st.expander(label):
-            # Verbatim chunk text (the citation unit; byte-equal to the store).
-            st.text(s.document.content)
-            st.markdown("**Provenance**")
-            st.json(s.document.meta or {})
-
-    if below:
-        with st.expander(
-            f"Other retrieved candidates below MIN_SCORE — NOT used for grounding ({len(below)})"
-        ):
-            for s in below:
-                st.markdown(f"- cosine {_fmt(s.cosine_score)} · {first_line(s.document.content)}")
 
 
 if __name__ == "__main__":
