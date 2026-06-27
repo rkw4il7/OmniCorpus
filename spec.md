@@ -128,8 +128,11 @@ Click-to-expand (accepted in place of hover). No JS, no custom components.
 ## 8. Non-goals (defer to later tasks)
 
 Auth / multi-user; hybrid or keyword retrieval (note `PgvectorKeywordRetriever` exists for a
-future hybrid task); reranking; an evaluation harness (e.g. RAGAS); incremental/streaming
+future hybrid task); an evaluation harness (e.g. RAGAS); incremental/streaming
 ingestion; conversation memory; horizontal scaling. Single-process Streamlit is sufficient.
+
+Cross-encoder reranking was originally a non-goal but has since been implemented
+(retrieve cosine candidates → cross-encoder reorder → ground on the top-K).
 
 ## 9. Implementation plan
 

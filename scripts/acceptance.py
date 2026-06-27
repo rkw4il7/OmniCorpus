@@ -14,9 +14,9 @@ Notes
 - Ingestion captures the Docling-emitted chunks ONCE and reuses them for the
   embed+write step, so the (slow, OCR-heavy) conversion runs a single time and
   A3 (no lossy transform) can compare store content to the exact emitted text.
-- Format coverage: §7.3 asks for a mixed PDF+DOCX+HTML corpus. This phase ships
-  PDF only (DOCX/HTML deferred by explicit user decision); the harness reports
-  the coverage it actually finds rather than failing on the missing formats.
+- Format coverage: §7.3 asks for a mixed PDF+DOCX+HTML corpus. The committed
+  sample set (tests/data/sample-clinical-guideline.{pdf,docx,html}) covers all
+  three; the harness reports the formats it actually finds.
 """
 
 from __future__ import annotations
@@ -139,8 +139,7 @@ def check_3_ingest(ctx: Context) -> Result:
     return Result(
         "§7.3 ingest: N>0, embedded len=DIM, provenance",
         ok,
-        f"chunks={n} embed_ok={all_embedded} meta_ok={all_meta} formats={exts} "
-        f"(PDF-only this phase; DOCX/HTML deferred)",
+        f"chunks={n} embed_ok={all_embedded} meta_ok={all_meta} formats={exts}",
     )
 
 
@@ -404,8 +403,8 @@ def write_report(results: list[Result], path: Path) -> None:
         "",
         "## Biggest issues / caveats",
         "",
-        "- **Format coverage:** PDF only this phase; §7.3 DOCX/HTML deferred by "
-        "user decision. Adapters + Docling already support them.",
+        "- **Format coverage:** §7.3 mixed PDF+DOCX+HTML is satisfied by the "
+        "committed synthetic sample set; drop more files in tests/data/ to extend.",
         "- **OCR latency:** Docling runs RapidOCR on the PDF (text-layer present, "
         "OCR returns empty) making ingest slow (~minutes).",
         "- **Chunk vs embedding length:** some HybridChunker chunks exceed the "

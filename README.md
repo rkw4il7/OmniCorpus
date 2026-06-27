@@ -71,12 +71,12 @@ Put your documents where `CORPUS_SOURCES` points (PDF, DOCX, HTML, …), then:
 uv run corpus-rag ingest          # add --reset to recreate the table
 ```
 
-A tiny **synthetic sample** ships in the repo at
-`./tests/data/sample-clinical-guideline.pdf` so a fresh clone always has
-something to ingest, chunk, and process — no need to supply your own corpus to
-see the pipeline work end to end. It is generated, non-PHI, common-knowledge
-reference text (two headed sections); regenerate it with
-`uv run python scripts/make_sample_pdf.py`. Real or licensed corpora are
+A tiny **synthetic sample** ships in the repo in three formats —
+`./tests/data/sample-clinical-guideline.{pdf,docx,html}` — so a fresh clone
+always has something to ingest, chunk, and process (and so the mixed-format
+PDF+DOCX+HTML claim is backed by real fixtures). It is generated, non-PHI,
+common-knowledge reference text (two headed sections); regenerate all three with
+`uv run python scripts/make_sample_corpus.py`. Real or licensed corpora are
 gitignored — drop them in `./tests/data/` and they'll be picked up too.
 
 With the default `.env` (below) `CORPUS_SOURCES` already points at

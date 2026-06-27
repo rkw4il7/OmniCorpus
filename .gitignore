@@ -225,6 +225,8 @@ __marimo__/
 tests/data/*
 !tests/data/.gitkeep
 !tests/data/sample-clinical-guideline.pdf
+!tests/data/sample-clinical-guideline.docx
+!tests/data/sample-clinical-guideline.html
 
 # IntelliJ: track shared project config but not per-user editor/session state.
 .idea/workspace.xml
