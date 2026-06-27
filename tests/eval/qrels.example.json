@@ -1,0 +1,21 @@
+[
+  {
+    "query": "Which oral antibiotic is recommended as the first-line treatment for pneumonia in adults?",
+    "relevant": [
+      {"contains": "first-line"},
+      {"contains": "pneumonia"}
+    ]
+  },
+  {
+    "query": "What is the recommended INR target range for warfarin therapy?",
+    "relevant": [
+      {"contains": "INR"}
+    ]
+  },
+  {
+    "query": "When should antibiotics be escalated for a non-responding infection?",
+    "relevant": [
+      {"source": "guideline", "contains": "escalat"}
+    ]
+  }
+]
