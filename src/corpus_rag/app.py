@@ -82,6 +82,24 @@ def _get_ingest_pipeline():
     return build_indexing_pipeline(build_document_store(settings), settings)
 
 
+@st.cache_resource(show_spinner="Preparing vector store…")
+def _ensure_store_ready() -> bool:
+    """Create the store table + HNSW index on a fresh database, once per process.
+
+    The app must run against an empty DB (e.g. a just-started container) with no
+    prior ingest. ``build_document_store`` constructs ``PgvectorDocumentStore``,
+    which creates the table + index idempotently (and asserts the §7.2 dimension
+    contract). Done at startup so the corpus is queryable/ingestable immediately —
+    the table is never "missing". Returns True on success; the caller renders a
+    soft error if the store is unreachable.
+    """
+    from corpus_rag.document_store import build_document_store
+    from corpus_rag.settings import get_settings
+
+    build_document_store(get_settings())
+    return True
+
+
 def _ingest_uploads(uploaded_files) -> int:
     """Ingest GUI-uploaded files into the corpus; return chunks written.
 
@@ -247,11 +265,14 @@ def _render_ingest_sidebar() -> None:
             st.rerun()
 
         st.subheader("Currently Loaded")
+        # Create the store table on a fresh DB so the corpus is usable with zero
+        # prior ingest; tolerate the store being unreachable.
         try:
+            _ensure_store_ready()
             loaded = _loaded_documents()
         except Exception:  # noqa: BLE001 — store may be down; don't crash the page
             logger.exception("Listing loaded documents failed")
-            st.caption("Could not list documents (store unavailable).")
+            st.caption("Could not reach the vector store.")
             return
         if not loaded:
             st.caption("No documents ingested yet.")
