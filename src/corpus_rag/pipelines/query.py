@@ -17,7 +17,7 @@ order, always surfaced (even on abstention) so the UI shows what grounding exist
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -165,13 +165,19 @@ def run_query(
 
 @dataclass(frozen=True)
 class RankedSource:
-    """One retrieved chunk with both its cosine and rerank rank/score."""
+    """One retrieved chunk with both its cosine and rerank rank/score.
+
+    ``used_for_grounding`` is True only for the chunks actually fed to the
+    generator (the top-TOP_K of the floor-passing set) — so the UI can label
+    exactly what grounded the answer, not merely what passed the floor.
+    """
 
     document: Document
     cosine_rank: int
     cosine_score: float | None
     rerank_rank: int
     rerank_score: float | None
+    used_for_grounding: bool = False
 
 
 @dataclass
@@ -276,9 +282,15 @@ def run_query_reranked(
         return ABSTENTION_ANSWER, ranked_sources
 
     # Ground the answer in the TOP_K reranked chunks only — the whole point of
-    # reranking is to feed the LLM the best few, not all RERANK_CANDIDATES. The
-    # UI still displays every candidate; only the generator's context shrinks.
+    # reranking is to feed the LLM the best few, not all RERANK_CANDIDATES.
     llm_sources = grounded[: settings.top_k]
+
+    # Mark exactly the chunks fed to the generator so the UI labels truth (not
+    # "every floor-passer"). llm_sources are members of ranked_sources here, so
+    # identity membership is precise; replace() rebuilds the frozen dataclasses.
+    used_ids = {id(rs) for rs in llm_sources}
+    ranked_sources = [replace(rs, used_for_grounding=id(rs) in used_ids) for rs in ranked_sources]
+
     prompt = engine.prompt_builder.run(query=query, documents=[rs.document for rs in llm_sources])[
         "prompt"
     ]

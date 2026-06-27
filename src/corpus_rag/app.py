@@ -200,12 +200,10 @@ def main() -> None:
     else:
         st.markdown(answer)
 
-    # Only chunks at/above the MIN_SCORE floor grounded the answer; below-threshold
-    # candidates did not contribute, so they are not displayed.
-    from corpus_rag.settings import get_settings
-
-    floor = get_settings().min_score
-    grounded = [s for s in sources if floor <= 0.0 or (s.cosine_score or 0.0) >= floor]
+    # Show exactly the chunks the generator was fed (the pipeline marks them);
+    # below-floor and beyond-top-K candidates did not contribute, so they are
+    # not displayed.
+    grounded = [s for s in sources if s.used_for_grounding]
 
     st.subheader(f"Sources used for grounding ({len(grounded)})")
     if not grounded:

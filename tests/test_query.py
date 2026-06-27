@@ -175,6 +175,8 @@ def test_rerank_grounds_llm_on_top_k_only_but_returns_all_candidates() -> None:
     assert len(sources) == 3  # all candidates surfaced for display
     sent = engine.prompt_builder.run.call_args.kwargs["documents"]
     assert [d.id for d in sent] == [c.id, a.id]  # only top_k, in rerank order
+    # used_for_grounding marks EXACTLY the chunks fed to the LLM (rerank order c,a,b).
+    assert [s.used_for_grounding for s in sources] == [True, True, False]
 
 
 def test_rerank_empty_query_abstains_without_running_engine() -> None:
@@ -196,6 +198,8 @@ def test_rerank_min_score_gate_abstains_but_still_returns_sources() -> None:
     # Cosine scores below the floor -> abstain, but the 2 sources still surface.
     assert answer == ABSTENTION_ANSWER
     assert [s.document.id for s in sources] == [b.id, a.id]
+    # Nothing was fed to the generator, so nothing is marked grounding.
+    assert not any(s.used_for_grounding for s in sources)
     engine.generator.run.assert_not_called()
 
 

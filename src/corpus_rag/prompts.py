@@ -31,7 +31,7 @@ Hard rules:
   "__ABSTENTION__"
 
 {% if documents %}
-RETRIEVED SOURCES (ranked by semantic similarity, most relevant first):
+RETRIEVED SOURCES (most relevant first):
 {% for doc in documents %}
 [Source {{ loop.index }}]
 {{ doc.content }}
