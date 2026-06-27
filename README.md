@@ -60,12 +60,28 @@ uv sync
 ```
 
 ### 2. Bring up services
-- **Postgres + pgvector** — either the bundled container or your own server:
-  ```bash
-  docker compose up -d        # ./docker-compose.yml
-  ```
-- **A local OpenAI-compatible LLM** (llama.cpp / vLLM / Ollama) serving a `/v1`
-  endpoint.
+Two backends, switchable — run everything in Docker, or point at your own
+LAN/remote Postgres + LLM. Embeddings + reranker always run in the host Python
+process either way.
+
+**Option A — fully containerized (DB + LLM):**
+```bash
+make stack                  # docker compose --profile llm up -d
+make backend-docker         # point .env at the container endpoints
+make logs                   # first start downloads the small GGUF — watch it
+```
+The `llm` service is llama.cpp's server with a 0.5B Qwen GGUF (CPU; auto-
+downloaded, OpenAI API at `:8080/v1`). Swap the `-hf` model in
+`./docker-compose.yml` for something larger if you have the cores.
+
+**Option B — your own services (LAN/remote):**
+- **Postgres + pgvector** — bundled container (`make db`) or your own server.
+- **A local OpenAI-compatible LLM** (llama.cpp / vLLM / Ollama) on `/v1`.
+- Set the endpoints in `.env` (see step 3). `make backend-lan` restores a
+  previously saved `.env` from `.env.bak`.
+
+`make help` lists all targets (`db`, `stack`, `down`, `ingest`, `app`, `test`,
+`test-live`).
 
 ### 3. Configure
 Copy the template and fill in your services:

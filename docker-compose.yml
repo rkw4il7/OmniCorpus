@@ -5,8 +5,13 @@
 # docker-entrypoint-initdb.d so `CREATE EXTENSION IF NOT EXISTS vector;` runs
 # once, the first time the data volume is created. (Spec §7.1.)
 #
-# Bring up:   docker compose up -d
+# Bring up DB only:        docker compose up -d
+# Bring up DB + local LLM: docker compose --profile llm up -d
 # Conn str:   postgresql://postgres:postgres@localhost:5432/corpus_rag
+# LLM (OpenAI-compatible): http://localhost:8080/v1
+#
+# Use the container backend by copying its env:  cp .env.docker.example .env
+# (Embeddings + reranker always run in the host Python process, not a container.)
 
 services:
   postgres:
@@ -26,5 +31,30 @@ services:
       timeout: 5s
       retries: 10
 
+  # Small local OpenAI-compatible LLM for inference, fully in-container.
+  # llama.cpp's server downloads the GGUF from Hugging Face on first start
+  # (cached in the llamacache volume) and exposes the OpenAI API at /v1.
+  # Behind the "llm" profile so the default `up` (DB only) is unchanged and
+  # LAN-LLM users don't pull it. Runs on CPU (no Metal/CUDA in containers) —
+  # a 0.5B model keeps that usable; swap the -hf repo for a larger one if you
+  # have the cores. First start is slow (model download); watch `logs -f llm`.
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    profiles: ["llm"]
+    command:
+      - "-hf"
+      - "Qwen/Qwen2.5-0.5B-Instruct-GGUF:Q4_K_M"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "-c"
+      - "4096"
+    ports:
+      - "8080:8080"
+    volumes:
+      - llamacache:/root/.cache/llama.cpp
+
 volumes:
   pgdata:
+  llamacache:
