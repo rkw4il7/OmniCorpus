@@ -99,11 +99,27 @@ def _ingest_uploads(uploaded_files) -> int:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _source_name(meta: dict | None) -> str:
-    """Best-effort source filename from a chunk's Docling provenance metadata."""
-    dl = (meta or {}).get("dl_meta") or {}
+def _source_title(document) -> str:
+    """A human title for a chunk: filename → heading path → first line of text.
+
+    Never returns a placeholder like "(unknown source)" — falls back through the
+    Docling provenance (origin filename, then heading trail) to the chunk's own
+    first line so every row has a meaningful label.
+    """
+    dl = (document.meta or {}).get("dl_meta") or {}
     origin = dl.get("origin") or {}
-    return origin.get("filename") or "(unknown source)"
+    name = origin.get("filename")
+    if name:
+        return str(name)
+    headings = dl.get("headings") or []
+    if headings:
+        return str(headings[-1])
+    return first_line(document.content) or "Untitled"
+
+
+def _rank_score(rank: int, score: float | None) -> str:
+    """Combine an ordinal rank and its score as ``1 / 0.9942`` (or ``1 / n/a``)."""
+    return f"{rank} / {score:.4f}" if score is not None else f"{rank} / n/a"
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -169,11 +185,6 @@ def main() -> None:
 
     st.set_page_config(page_title="Corpus RAG Explorer", layout="wide")
     st.title("Corpus RAG Explorer")
-    st.caption(
-        "Semantic retrieval + cross-encoder reranking + grounded generation. "
-        "Answers are grounded in the retrieved corpus; specifics never come from "
-        "the model's training data."
-    )
 
     _render_ingest_sidebar()
 
@@ -205,7 +216,7 @@ def main() -> None:
     # not displayed.
     grounded = [s for s in sources if s.used_for_grounding]
 
-    st.subheader(f"Sources used for grounding ({len(grounded)})")
+    st.subheader("Sources")
     if not grounded:
         st.info(
             "No retrieved chunk met the MIN_SCORE grounding floor — the response above abstains."
@@ -213,21 +224,14 @@ def main() -> None:
         return
 
     # §2A.4: grounded sources co-rendered with the response, in rerank order.
-    # One table — ordinal/numeric columns left, verbatim chunk text on the right.
-    # `Δ` = places the cross-encoder moved a chunk up (+) / down (−) from cosine.
-    st.caption(
-        "In rerank order. Δ = places the cross-encoder moved a chunk up (+) / "
-        "down (−) from its cosine rank. Chunk text is the verbatim stored source."
-    )
+    # One table — Source title left, rank/score columns, verbatim chunk text right.
+    # "Rank" = rerank rank/score; "Similarity" = cosine rank/score (both "n / s").
     st.dataframe(
         [
             {
-                "Rerank #": s.rerank_rank,
-                "Cosine #": s.cosine_rank,
-                "Δ": s.cosine_rank - s.rerank_rank,
-                "Rerank score": round(s.rerank_score, 4) if s.rerank_score is not None else None,
-                "Cosine score": round(s.cosine_score, 4) if s.cosine_score is not None else None,
-                "Source": _source_name(s.document.meta),
+                "Source": _source_title(s.document),
+                "Rank": _rank_score(s.rerank_rank, s.rerank_score),
+                "Similarity": _rank_score(s.cosine_rank, s.cosine_score),
                 "Chunk text": s.document.content,
             }
             for s in grounded
