@@ -10,8 +10,11 @@ dependencies = [
     # Multi-format ingestion via Docling
     "docling>=2.15,<3.0",
     "docling-haystack>=0.2,<1.0",
-    # Local embeddings
-    "sentence-transformers>=3.3,<4.0",
+    # Local embeddings + cross-encoder reranking. ST 4.x is required by
+    # haystack's SentenceTransformersSimilarityRanker (its CrossEncoder takes
+    # `model_name_or_path`). bge-base weights are unchanged across 3↔4, so the
+    # embedding dimension contract (768) holds.
+    "sentence-transformers>=4.0,<6.0",
     # Vector store: Postgres + pgvector
     "pgvector-haystack>=6.3,<7.0",
     "psycopg[binary]>=3.2,<4.0",
