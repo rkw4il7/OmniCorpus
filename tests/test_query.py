@@ -248,16 +248,26 @@ def _corpus_answerable_query(store, settings) -> str:
 
 @pytest.mark.live
 def test_live_retrieval_count_and_ordering() -> None:
-    """§7.5: min(TOP_K, N) docs returned with non-increasing scores."""
-    engine, store, settings = _live_engine_and_store()
-    if settings.min_score > 0.0:
-        pytest.skip("MIN_SCORE>0 post-filters docs; count assertion not applicable.")
-    _, docs = run_query("What does the guideline recommend?", engine=engine, settings=settings)
+    """§7.5: count bounded by min(TOP_K, N), non-increasing scores, floor honored.
 
-    expected = min(settings.top_k, store.count_documents())
-    assert len(docs) == expected
+    Works under any MIN_SCORE (no skip): the gate only drops docs, so the count
+    is always ≤ min(TOP_K, N); with the floor off it is exactly that.
+    """
+    engine, store, settings = _live_engine_and_store()
+    # A corpus-answerable query so ≥1 doc survives the floor (domain-agnostic).
+    query = _corpus_answerable_query(store, settings)
+    _, docs = run_query(query, engine=engine, settings=settings)
+
+    expected_max = min(settings.top_k, store.count_documents())
+    assert 1 <= len(docs) <= expected_max
     scores = [d.score for d in docs]
     assert all(a >= b for a, b in zip(scores, scores[1:], strict=False))
+    if settings.min_score > 0.0:
+        # Every surfaced doc cleared the grounding floor.
+        assert all((d.score or 0.0) >= settings.min_score for d in docs)
+    else:
+        # Floor off: the retriever returns the full top-k (no post-filtering).
+        assert len(docs) == expected_max
 
 
 @pytest.mark.live

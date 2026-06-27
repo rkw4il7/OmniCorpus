@@ -54,3 +54,9 @@ pythonpath = ["src"]
 markers = [
     "live: tests requiring live services (Postgres/pgvector + local LLM); skipped offline",
 ]
+# Silence third-party deprecation noise from Docling/RapidOCR (live ingest only).
+# Scoped to those upstream modules — our own code's warnings still surface.
+filterwarnings = [
+    "ignore::DeprecationWarning:docling.pipeline.standard_pdf_pipeline",
+    "ignore::DeprecationWarning:docling.models.stages.ocr.rapid_ocr_model",
+]
