@@ -164,8 +164,13 @@ def _loaded_documents() -> list[tuple[str, int]]:
         f"SELECT {_SOURCE_NAME_SQL} AS name, COUNT(*) AS n "
         "FROM haystack_documents GROUP BY name ORDER BY name"
     )
-    with psycopg.connect(get_settings().pg_conn_str) as conn:
-        rows = conn.execute(sql).fetchall()
+    try:
+        with psycopg.connect(get_settings().pg_conn_str) as conn:
+            rows = conn.execute(sql).fetchall()
+    except psycopg.errors.UndefinedTable:
+        # Fresh database: the store table is created on first ingest. No table yet
+        # simply means no documents are loaded — not an error.
+        return []
     return [(str(name), int(n)) for name, n in rows]
 
 
