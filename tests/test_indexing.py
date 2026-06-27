@@ -40,6 +40,15 @@ def test_run_indexing_returns_pipeline_result() -> None:
     assert result == {"writer": {"documents_written": 7}}
 
 
+def test_run_indexing_forwards_meta_to_converter() -> None:
+    pipeline = MagicMock()
+    meta = [{"source": "a.pdf"}]
+
+    run_indexing(pipeline, ["a.pdf"], meta=meta)
+
+    pipeline.run.assert_called_once_with({"converter": {"sources": ["a.pdf"], "meta": meta}})
+
+
 # --- live ----------------------------------------------------------------
 
 

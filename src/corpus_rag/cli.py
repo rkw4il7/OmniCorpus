@@ -34,6 +34,18 @@ def _label(source: Source) -> str:
     return url or f"<bytes {source.mime_type or 'unknown'}>"
 
 
+def _source_name(source: Source) -> str:
+    """Stable provenance name (basename / URL) attached as chunk ``source`` meta.
+
+    Gives every chunk a clean filename for display and a deterministic
+    content+meta-derived Document.id (idempotent re-ingest).
+    """
+    if isinstance(source, str | Path):
+        return Path(str(source)).name
+    meta = source.meta or {}
+    return meta.get("source_url") or Path(str(meta.get("file_path", "upload"))).name
+
+
 @app.command()
 def ingest(
     reset: bool = typer.Option(
@@ -72,7 +84,7 @@ def ingest(
     store = build_document_store(settings, recreate_table=reset)
     pipeline = build_indexing_pipeline(store, settings)
     typer.echo("Indexing… (loading embedding model on first run)")
-    run_indexing(pipeline, sources)
+    run_indexing(pipeline, sources, meta=[{"source": _source_name(s)} for s in sources])
     typer.echo(f"Done. Store now holds {store.count_documents()} chunk(s).")
 
 

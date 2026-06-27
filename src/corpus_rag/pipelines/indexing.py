@@ -113,11 +113,22 @@ def build_indexing_pipeline(
     return pipeline
 
 
-def run_indexing(pipeline: Pipeline, sources: list[Source]) -> dict:
+def run_indexing(
+    pipeline: Pipeline,
+    sources: list[Source],
+    meta: list[dict] | dict | None = None,
+) -> dict:
     """Run the indexing pipeline over already-discovered sources.
 
     :param pipeline: A pipeline from :func:`build_indexing_pipeline`.
     :param sources: Paths / ByteStreams from the adapter registry.
+    :param meta: Optional per-source (list, zipped 1:1) or shared (dict) metadata
+        merged into every emitted chunk. Used to attach a stable ``source`` name
+        so provenance display and the content+meta-derived Document.id are
+        deterministic across re-ingest (idempotency).
     :returns: The pipeline result (includes the writer's documents-written count).
     """
-    return pipeline.run({"converter": {"sources": sources}})
+    converter_inputs: dict = {"sources": sources}
+    if meta is not None:
+        converter_inputs["meta"] = meta
+    return pipeline.run({"converter": converter_inputs})
