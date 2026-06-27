@@ -34,7 +34,9 @@ ALLOWED_UPLOAD_TYPES = ["pdf", "docx", "pptx", "html", "htm", "md"]
 # Uploaded files are persisted here (by basename) rather than a random temp dir,
 # so re-ingesting the same file resolves to the same path + provenance → the same
 # content+meta-derived Document.id → OVERWRITE dedups instead of duplicating.
-UPLOAD_DIR = Path("uploads")
+# Anchored to the PROJECT ROOT (not CWD) so idempotency holds regardless of where
+# the Streamlit process was launched from. (app.py is src/corpus_rag/app.py.)
+UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 
 # Cap total upload size: ingest (esp. OCR, on by default) runs in the Streamlit
 # request handler, so a huge upload would block the worker for minutes/hours.

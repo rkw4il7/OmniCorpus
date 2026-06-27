@@ -57,6 +57,52 @@ def test_allowed_upload_types_are_bare_lowercase_extensions() -> None:
     assert all(t == t.lower() and not t.startswith(".") for t in ALLOWED_UPLOAD_TYPES)
 
 
+def test_unload_document_deletes_chunks_and_removes_file(monkeypatch, tmp_path) -> None:
+    """The only data-deletion path: DELETE by display name + remove the upload."""
+    import psycopg
+
+    from corpus_rag import app
+    from corpus_rag import settings as settings_mod
+
+    # Anchor uploads at a temp dir and seed the persisted file to be removed.
+    monkeypatch.setattr(app, "UPLOAD_DIR", tmp_path)
+    upload = tmp_path / "report.pdf"
+    upload.write_bytes(b"pdf-bytes")
+
+    captured: dict = {}
+
+    class _FakeCursor:
+        rowcount = 3
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params=None):
+            captured["sql"] = sql
+            captured["params"] = params
+            return _FakeCursor()
+
+    monkeypatch.setattr(psycopg, "connect", lambda *a, **k: _FakeConn())
+    monkeypatch.setattr(
+        settings_mod,
+        "get_settings",
+        lambda: type("S", (), {"pg_conn_str": "postgresql://x"})(),
+    )
+
+    removed = app._unload_document("report.pdf")
+
+    assert removed == 3
+    assert "DELETE FROM haystack_documents" in captured["sql"]
+    # Deletion keys on the SAME name expression the sidebar list shows.
+    assert app._SOURCE_NAME_SQL in captured["sql"]
+    assert captured["params"] == ("report.pdf",)
+    assert not upload.exists()  # persisted upload removed too
+
+
 def test_source_title_prefers_origin_filename() -> None:
     doc = Document(content="body", meta={"dl_meta": {"origin": {"filename": "guideline.pdf"}}})
     assert _source_title(doc) == "guideline.pdf"
