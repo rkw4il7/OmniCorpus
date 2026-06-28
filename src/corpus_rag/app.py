@@ -21,8 +21,11 @@ from pathlib import Path
 
 import streamlit as st
 
+from corpus_rag.logging_setup import quiet_noisy_upstream
 from corpus_rag.prompts import ABSTENTION_ANSWER
 from corpus_rag.settings import get_settings
+
+quiet_noisy_upstream()
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +47,17 @@ UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 # other column layout on the page.
 _LOADED_TABLE_CSS = """
 <style>
+/* Collapse Streamlit's vertical gap so the rows form one continuous table. */
+.st-key-loaded-table [data-testid="stVerticalBlock"] { gap: 0 !important; }
+/* Each row: side + bottom borders; top border only on the first so adjacent
+   rows share a single line instead of doubling. */
 .st-key-loaded-table [data-testid="stHorizontalBlock"] {
     border: 1px solid #00008b;
-    border-bottom: none;
+    border-top: none;
     align-items: center;
 }
-.st-key-loaded-table [data-testid="stHorizontalBlock"]:last-child {
-    border-bottom: 1px solid #00008b;
+.st-key-loaded-table [data-testid="stHorizontalBlock"]:first-child {
+    border-top: 1px solid #00008b;
 }
 .st-key-loaded-table [data-testid="stColumn"],
 .st-key-loaded-table [data-testid="column"] {

@@ -60,6 +60,9 @@ def ingest(
     ),
 ) -> None:
     """Discover all configured sources and index them into the vector store."""
+    from corpus_rag.logging_setup import quiet_noisy_upstream
+
+    quiet_noisy_upstream()
     settings = get_settings()
     if not settings.corpus_sources:
         typer.echo("No CORPUS_SOURCES configured; nothing to ingest.")
