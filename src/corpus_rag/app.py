@@ -43,6 +43,31 @@ UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 MAX_UPLOAD_MB = 50
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
+# Renders the "Currently Loaded" st.columns grid as a bordered table with dark
+# blue (#00008b) cell borders. Scoped to the keyed container so it touches no
+# other column layout on the page.
+_LOADED_TABLE_CSS = """
+<style>
+.st-key-loaded-table [data-testid="stHorizontalBlock"] {
+    border: 1px solid #00008b;
+    border-bottom: none;
+    align-items: center;
+}
+.st-key-loaded-table [data-testid="stHorizontalBlock"]:last-child {
+    border-bottom: 1px solid #00008b;
+}
+.st-key-loaded-table [data-testid="stColumn"],
+.st-key-loaded-table [data-testid="column"] {
+    border-right: 1px solid #00008b;
+    padding: 2px 6px;
+}
+.st-key-loaded-table [data-testid="stColumn"]:last-child,
+.st-key-loaded-table [data-testid="column"]:last-child {
+    border-right: none;
+}
+</style>
+"""
+
 
 def first_line(content: str, max_len: int = _FIRST_LINE_MAX) -> str:
     """Derive the expander label from a chunk's content (root §4.4).
@@ -277,24 +302,35 @@ def _render_ingest_sidebar() -> None:
         if not loaded:
             st.caption("No documents ingested yet.")
             return
-        for name, n in loaded:
-            label_col, btn_col = st.columns([0.82, 0.18])
-            label_col.write(f"{name} — {n} chunk(s)")
-            if btn_col.button("✕", key=f"unload_{name}", help=f"Remove {name} from the corpus"):
-                try:
-                    removed = _unload_document(name)
-                    _loaded_documents.clear()
-                    st.session_state["ingest_msg"] = (
-                        "ok",
-                        f"Removed {name} ({removed} chunk(s)).",
-                    )
-                except Exception:  # noqa: BLE001 — generic message; detail to logs
-                    logger.exception("Unload failed")
-                    st.session_state["ingest_msg"] = (
-                        "err",
-                        "Remove failed. Check the server logs for details.",
-                    )
-                st.rerun()
+
+        # Table: Delete | Source | Chunks, dark-blue bordered (CSS scoped to key).
+        st.markdown(_LOADED_TABLE_CSS, unsafe_allow_html=True)
+        widths = [0.22, 0.56, 0.22]
+        with st.container(key="loaded-table"):
+            head = st.columns(widths)
+            head[0].markdown("**Delete**")
+            head[1].markdown("**Source**")
+            head[2].markdown("**Chunks**")
+            for name, n in loaded:
+                row = st.columns(widths)
+                clicked = row[0].button("✕", key=f"unload_{name}", help=f"Remove {name}")
+                row[1].write(name)
+                row[2].write(str(n))
+                if clicked:
+                    try:
+                        removed = _unload_document(name)
+                        _loaded_documents.clear()
+                        st.session_state["ingest_msg"] = (
+                            "ok",
+                            f"Removed {name} ({removed} chunk(s)).",
+                        )
+                    except Exception:  # noqa: BLE001 — generic message; detail to logs
+                        logger.exception("Unload failed")
+                        st.session_state["ingest_msg"] = (
+                            "err",
+                            "Remove failed. Check the server logs for details.",
+                        )
+                    st.rerun()
 
 
 def main() -> None:
