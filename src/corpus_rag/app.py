@@ -173,9 +173,9 @@ def _source_title(document) -> str:
     return first_line(document.content) or "Untitled"
 
 
-def _rank_score(rank: int, score: float | None) -> str:
-    """Combine an ordinal rank and its score as ``1 / 0.9942`` (or ``1 / n/a``)."""
-    return f"{rank} / {score:.4f}" if score is not None else f"{rank} / n/a"
+def _score_str(score: float | None) -> str:
+    """Format a score value as ``0.9942`` (or ``n/a`` when absent)."""
+    return f"{score:.4f}" if score is not None else "n/a"
 
 
 # Display name for a stored chunk, as a SQL expression: our ingest-time ``source``
@@ -388,15 +388,20 @@ def main() -> None:
         )
         return
 
-    # §2A.4: grounded sources co-rendered with the response, in rerank order.
-    # One table — Source title left, rank/score columns, verbatim chunk text right.
-    # "Rank" = rerank rank/score; "Similarity" = cosine rank/score (both "n / s").
+    # §2A.4: grounded sources co-rendered with the response, ordered by rerank
+    # score (highest first). One table — Source title left, score columns, then
+    # verbatim chunk text. "ReRank" = cross-encoder score; "Similarity" = cosine.
+    grounded = sorted(
+        grounded,
+        key=lambda s: (s.rerank_score is not None, s.rerank_score or 0.0),
+        reverse=True,
+    )
     st.dataframe(
         [
             {
                 "Source": _source_title(s.document),
-                "Rank": _rank_score(s.rerank_rank, s.rerank_score),
-                "Similarity": _rank_score(s.cosine_rank, s.cosine_score),
+                "ReRank": _score_str(s.rerank_score),
+                "Similarity": _score_str(s.cosine_score),
                 "Chunk text": s.document.content,
             }
             for s in grounded

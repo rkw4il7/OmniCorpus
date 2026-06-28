@@ -11,7 +11,7 @@ from haystack import Document
 from corpus_rag.app import (
     _FIRST_LINE_MAX,
     ALLOWED_UPLOAD_TYPES,
-    _rank_score,
+    _score_str,
     _source_title,
     first_line,
 )
@@ -121,7 +121,7 @@ def test_source_title_never_blank() -> None:
     assert _source_title(Document(content="", meta={})) == "Untitled"
 
 
-def test_rank_score_formats_rank_and_score() -> None:
-    assert _rank_score(1, 0.9942) == "1 / 0.9942"
-    assert _rank_score(2, 0.99417) == "2 / 0.9942"  # rounded to 4 dp
-    assert _rank_score(3, None) == "3 / n/a"
+def test_score_str_formats_score() -> None:
+    assert _score_str(0.9942) == "0.9942"
+    assert _score_str(0.99417) == "0.9942"  # rounded to 4 dp
+    assert _score_str(None) == "n/a"
