@@ -46,8 +46,13 @@ UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 _LOADED_TABLE_CSS = """
 <style>
 /* Targets Streamlit 1.x internal data-testids — revisit on a Streamlit upgrade. */
-/* Collapse Streamlit's vertical gap so the rows form one continuous table. */
-.st-key-loaded-table [data-testid="stVerticalBlock"] { gap: 0 !important; }
+/* Collapse Streamlit's row/wrapper spacing so the rows form one continuous table. */
+.st-key-loaded-table [data-testid="stVerticalBlock"],
+.st-key-loaded-table [data-testid="stElementContainer"] {
+    gap: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
 /* Each row: side + bottom borders; top border only on the first so adjacent
    rows share a single line instead of doubling. */
 .st-key-loaded-table [data-testid="stHorizontalBlock"] {
@@ -66,6 +71,16 @@ _LOADED_TABLE_CSS = """
 .st-key-loaded-table [data-testid="stColumn"]:last-child,
 .st-key-loaded-table [data-testid="column"]:last-child {
     border-right: none;
+}
+.st-key-loaded-table [data-testid="stMarkdownContainer"] p {
+    margin: 0 !important;
+}
+.st-key-loaded-table .stButton {
+    margin: 0 !important;
+}
+.st-key-loaded-table .stButton button {
+    min-height: 1.75rem;
+    padding: 0 0.4rem;
 }
 </style>
 """
