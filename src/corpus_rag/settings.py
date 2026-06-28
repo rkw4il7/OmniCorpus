@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # Corpus origins: JSON array of {adapter, root|url, ...} objects.
     corpus_sources: list[SourceConfig] = Field(default_factory=list)
 
+    # GUI upload cap (MB) for the total of a single upload batch. Ingest runs in
+    # the Streamlit request handler, so this bounds how long a worker can block.
+    # Must stay <= Streamlit's server.maxUploadSize (.streamlit/config.toml).
+    upload_max_mb: int = 200
+
     @model_validator(mode="after")
     def _validate(self) -> Settings:
         if self.top_k < 1:
@@ -92,6 +97,8 @@ class Settings(BaseSettings):
             raise ValueError("MIN_SCORE must be in [0.0, 1.0] (cosine floor)")
         if self.chunk_token_margin < 0:
             raise ValueError("CHUNK_TOKEN_MARGIN must be >= 0")
+        if self.upload_max_mb < 1:
+            raise ValueError("UPLOAD_MAX_MB must be >= 1")
         if self.rerank_candidates < 1:
             raise ValueError("RERANK_CANDIDATES must be >= 1")
         if self.llm_timeout < 1:

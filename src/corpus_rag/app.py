@@ -38,11 +38,6 @@ ALLOWED_UPLOAD_TYPES = ["pdf", "docx", "pptx", "html", "htm", "md"]
 # the Streamlit process was launched from. (app.py is src/corpus_rag/app.py.)
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 
-# Cap total upload size: ingest (esp. OCR, on by default) runs in the Streamlit
-# request handler, so a huge upload would block the worker for minutes/hours.
-MAX_UPLOAD_MB = 50
-MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
-
 # Renders the "Currently Loaded" st.columns grid as a bordered table with dark
 # blue (#00008b) cell borders. Scoped to the keyed container so it touches no
 # other column layout on the page.
@@ -241,9 +236,17 @@ def _unload_document(name: str) -> int:
 
 
 def _render_ingest_sidebar() -> None:
+    from corpus_rag.settings import get_settings
+
+    cap_mb = get_settings().upload_max_mb
+    cap_bytes = cap_mb * 1024 * 1024
+
     with st.sidebar:
         st.header("Documents")
-        st.caption(f"Upload to ingest ({', '.join(ALLOWED_UPLOAD_TYPES)}).")
+        st.caption(
+            f"Upload to ingest ({', '.join(ALLOWED_UPLOAD_TYPES)}). "
+            f"File Size Limit: {cap_mb} MB"
+        )
 
         # Surface the result of the just-completed ingest. It is stashed in
         # session_state because we rerun (to reset the uploader) right after.
@@ -256,20 +259,19 @@ def _render_ingest_sidebar() -> None:
         # on the next run, so the widget returns to its pre-upload state.
         round_ = st.session_state.setdefault("upload_round", 0)
         uploads = st.file_uploader(
-            "Upload files",
+            "Drag Files Here...",
             type=ALLOWED_UPLOAD_TYPES,
             accept_multiple_files=True,
-            label_visibility="collapsed",
             key=f"uploader_{round_}",
         )
         # Ingest immediately on upload — no separate button (it is implied).
         if uploads:
             total_bytes = sum(len(f.getvalue()) for f in uploads)
-            if total_bytes > MAX_UPLOAD_BYTES:
+            if total_bytes > cap_bytes:
                 st.session_state["ingest_msg"] = (
                     "err",
                     f"Upload too large ({total_bytes // 1024 // 1024} MB); "
-                    f"limit is {MAX_UPLOAD_MB} MB.",
+                    f"limit is {cap_mb} MB.",
                 )
             else:
                 try:
@@ -289,7 +291,7 @@ def _render_ingest_sidebar() -> None:
             st.session_state["upload_round"] = round_ + 1  # reset the uploader
             st.rerun()
 
-        st.subheader("Currently Loaded")
+        st.subheader("Sources Currently Loaded")
         # Create the store table on a fresh DB so the corpus is usable with zero
         # prior ingest; tolerate the store being unreachable.
         try:
