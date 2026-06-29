@@ -443,8 +443,17 @@ def main() -> None:
     with st.sidebar:
         _render_ingest_sidebar()
 
-    query = st.chat_input("Ask a question...")
-    if query:
+    # Hide the input while a query is in flight: submitting stashes the query and
+    # reruns, so the busy run renders the status (no input) instead. The input
+    # returns once the response is stored. (No Cancel control — Streamlit is
+    # synchronous, so it could not abort the in-flight model call anyway.)
+    pending = st.session_state.get("pending_query")
+    if pending is None:
+        typed = st.chat_input("Ask a question...")
+        if typed:
+            st.session_state["pending_query"] = typed
+            st.rerun()
+    else:
         # Resolve the engine FIRST, OUTSIDE the status placeholder. On a fresh
         # process the @st.cache_resource model-load spinner fires here; doing it
         # before the status line means that spinner and our status never stack as
@@ -466,14 +475,14 @@ def main() -> None:
                 status.update(label=message)
 
             answer, sources = run_query_reranked(
-                query,
+                pending,
                 engine=engine,
                 progress=show_query_progress,
                 finish_reason_callback=finish_reasons.append,
             )
             status_area.empty()  # remove the status box; the answer renders below
             st.session_state["rag_result"] = {
-                "query": query,
+                "query": pending,
                 "answer": answer,
                 "sources": sources,
                 "finish_reason": finish_reasons[0] if finish_reasons else None,
@@ -483,8 +492,12 @@ def main() -> None:
             # can embed the connection string (credentials) or other internals.
             logger.exception("Query failed")
             status_area.empty()
+            st.session_state["pending_query"] = None
             st.error("Query failed. Check the server logs for details.")
             return
+        # Restore the input on the next run and render the freshly stored result.
+        st.session_state["pending_query"] = None
+        st.rerun()
 
     result = st.session_state.get("rag_result")
     if not result:
