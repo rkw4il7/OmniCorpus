@@ -53,10 +53,6 @@ _UPLOAD_ZONE_CSS = """
 .st-key-doc-upload section[data-testid="stFileUploaderDropzone"] {
     justify-content: center;
 }
-.st-key-delete-center [data-testid="stButton"] {
-    display: flex;
-    justify-content: center;
-}
 </style>
 """
 
@@ -449,8 +445,15 @@ def _render_ingest_sidebar() -> None:
     selected_rows = selection.selection.rows
     selected_name = table_rows[selected_rows[0]]["Source"] if selected_rows else None
     button_label = f"Delete selected: {selected_name}" if selected_name else "Delete selected"
-    with st.container(key="delete-center"):
-        delete_clicked = st.button(button_label, disabled=selected_name is None, type="secondary")
+    # Center via a 3-column "pane": the button fills the wider middle column, which
+    # is itself centered, so it reads as a centered block (reliable, no CSS).
+    _, mid, _ = st.columns([1, 2, 1])
+    delete_clicked = mid.button(
+        button_label,
+        disabled=selected_name is None,
+        type="secondary",
+        use_container_width=True,
+    )
     if delete_clicked:
         try:
             removed = _unload_document(selected_name)
