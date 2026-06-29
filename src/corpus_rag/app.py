@@ -40,50 +40,18 @@ ALLOWED_UPLOAD_TYPES = ["pdf", "docx", "pptx", "html", "htm", "md"]
 # the Streamlit process was launched from. (app.py is src/corpus_rag/app.py.)
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 
-# Renders the "Currently Loaded" st.columns grid as a bordered table with dark
-# blue (#00008b) cell borders. Scoped to the keyed container so it touches no
-# other column layout on the page.
-_LOADED_TABLE_CSS = """
+# Streamlit generates accepted-types/size helper text inside the drop zone from
+# the same `type=` and max-upload settings we enforce elsewhere. Hide just that
+# repeated helper line; the input, drag/drop, and type validation remain intact.
+_UPLOAD_ZONE_CSS = """
 <style>
-/* Targets Streamlit 1.x internal data-testids — revisit on a Streamlit upgrade. */
-/* Collapse Streamlit's row/wrapper spacing so the rows form one continuous table. */
-.st-key-loaded-table [data-testid="stVerticalBlock"],
-.st-key-loaded-table [data-testid="stElementContainer"] {
-    gap: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-/* Each row: side + bottom borders; top border only on the first so adjacent
-   rows share a single line instead of doubling. */
-.st-key-loaded-table [data-testid="stHorizontalBlock"] {
-    border: 1px solid #00008b;
-    border-top: none;
-    align-items: center;
-}
-.st-key-loaded-table [data-testid="stHorizontalBlock"]:first-child {
-    border-top: 1px solid #00008b;
-}
-.st-key-loaded-table [data-testid="stColumn"],
-.st-key-loaded-table [data-testid="column"] {
-    border-right: 1px solid #00008b;
-    padding: 2px 6px;
-}
-.st-key-loaded-table [data-testid="stColumn"]:last-child,
-.st-key-loaded-table [data-testid="column"]:last-child {
-    border-right: none;
-}
-.st-key-loaded-table [data-testid="stMarkdownContainer"] p {
-    margin: 0 !important;
-}
-.st-key-loaded-table .stButton {
-    margin: 0 !important;
-}
-.st-key-loaded-table .stButton button {
-    min-height: 1.75rem;
-    padding: 0 0.4rem;
+.st-key-doc-upload [data-testid="stFileUploaderDropzoneInstructions"] {
+    display: none;
 }
 </style>
 """
+
+_COMPLETE_ANSWER_ENDINGS = tuple(".!?:;)]}\"'")
 
 
 def first_line(content: str, max_len: int = _FIRST_LINE_MAX) -> str:
@@ -112,14 +80,16 @@ def _get_engine():
     return build_rerank_engine(build_document_store(settings), settings)
 
 
-@st.cache_resource(show_spinner="Loading ingest pipeline…")
-def _get_ingest_pipeline():
-    """Build the Docling → embed → write pipeline once (the embedder is heavy)."""
+@st.cache_resource(show_spinner="Loading ingest models + vector store…")
+def _get_ingest_components():
+    """Build and warm the Docling → embed → write components once per process."""
     from corpus_rag.document_store import build_document_store
-    from corpus_rag.pipelines.indexing import build_indexing_pipeline
+    from corpus_rag.pipelines.indexing import build_indexing_components
 
     settings = get_settings()
-    return build_indexing_pipeline(build_document_store(settings), settings)
+    components = build_indexing_components(build_document_store(settings), settings)
+    components.embedder.warm_up()
+    return components
 
 
 @st.cache_resource(show_spinner="Preparing vector store…")
@@ -139,7 +109,7 @@ def _ensure_store_ready() -> bool:
     return True
 
 
-def _ingest_uploads(uploaded_files) -> int:
+def _ingest_uploads(uploaded_files, progress=None) -> int:
     """Ingest GUI-uploaded files into the corpus; return chunks written.
 
     Each upload is persisted to ``UPLOAD_DIR`` under its basename (overwriting a
@@ -148,22 +118,45 @@ def _ingest_uploads(uploaded_files) -> int:
     Document.id deterministic, so re-ingesting the same file OVERWRITEs rather than
     duplicating (idempotent). New chunks are searchable on the next query.
     """
-    from corpus_rag.pipelines.indexing import run_indexing
-
-    pipeline = _get_ingest_pipeline()
+    components = _get_ingest_components()
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-    paths: list[str] = []
-    metas: list[dict] = []
+    def report(message: str, done: int = 0, total: int = 0) -> None:
+        if progress is not None:
+            progress(message, done, total)
+
+    saved: list[tuple[str, Path, dict]] = []
     for up in uploaded_files:
         name = Path(up.name).name or "upload"  # basename only (no path traversal)
         dest = UPLOAD_DIR / name
+        report(f"Saving {name}")
         dest.write_bytes(up.getvalue())  # overwrite any prior copy of this name
-        paths.append(str(dest))
-        metas.append({"source": name})
+        saved.append((name, dest, {"source": name}))
 
-    result = run_indexing(pipeline, paths, meta=metas)
-    return result.get("writer", {}).get("documents_written", 0)
+    documents = []
+    for i, (name, path, meta) in enumerate(saved, start=1):
+        report(f"Converting {name} ({i}/{len(saved)})")
+        converted = components.converter.run(sources=[str(path)], meta=[meta])["documents"]
+        documents.extend(converted)
+        report(f"Converted {name}: {len(converted)} chunk(s)", 0, len(documents))
+
+    total = len(documents)
+    if total == 0:
+        report("No chunks produced from upload", 0, 0)
+        return 0
+
+    written = 0
+    batch_size = get_settings().ingest_embed_batch_size
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        report(f"Embedding chunks {start + 1}-{end} of {total}", start, total)
+        embedded = components.embedder.run(documents=documents[start:end])["documents"]
+        report(f"Writing chunks {start + 1}-{end} of {total}", start, total)
+        result = components.writer.run(documents=embedded)
+        written += result.get("documents_written", 0)
+        report(f"Indexed {end} of {total} chunks", end, total)
+
+    return written
 
 
 def _source_title(document) -> str:
@@ -191,6 +184,18 @@ def _source_title(document) -> str:
 def _score_str(score: float | None) -> str:
     """Format a score value as ``0.9942`` (or ``n/a`` when absent)."""
     return f"{score:.4f}" if score is not None else "n/a"
+
+
+def _answer_may_be_incomplete(answer: str, finish_reason: str | None) -> bool:
+    """Detect visible truncation even when a local backend reports no length stop."""
+    stripped = answer.rstrip()
+    if not stripped or stripped == ABSTENTION_ANSWER:
+        return False
+    if finish_reason == "length":
+        return True
+    if finish_reason not in (None, "stop"):
+        return True
+    return not stripped.endswith(_COMPLETE_ANSWER_ENDINGS)
 
 
 # Display name for a stored chunk, as a SQL expression: our ingest-time ``source``
@@ -278,12 +283,14 @@ def _render_ingest_sidebar() -> None:
     # Rotating key: bumping it after an ingest gives a fresh, empty uploader
     # on the next run, so the widget returns to its pre-upload state.
     round_ = st.session_state.setdefault("upload_round", 0)
-    uploads = st.file_uploader(
-        "Drag Files Here...",
-        type=ALLOWED_UPLOAD_TYPES,
-        accept_multiple_files=True,
-        key=f"uploader_{round_}",
-    )
+    st.markdown(_UPLOAD_ZONE_CSS, unsafe_allow_html=True)
+    with st.container(key="doc-upload"):
+        uploads = st.file_uploader(
+            "Drag Files Here...",
+            type=ALLOWED_UPLOAD_TYPES,
+            accept_multiple_files=True,
+            key=f"uploader_{round_}",
+        )
     # Ingest immediately on upload — no separate button (it is implied).
     if uploads:
         total_bytes = sum(len(f.getvalue()) for f in uploads)
@@ -294,8 +301,22 @@ def _render_ingest_sidebar() -> None:
             )
         else:
             try:
-                with st.spinner("Ingesting (convert → chunk → embed → store)…"):
-                    written = _ingest_uploads(uploads)
+                ingest_status = st.status("Ingesting upload...", expanded=True)
+                ingest_progress = st.progress(0, text="Starting ingest")
+
+                def show_ingest_progress(message: str, done: int = 0, total: int = 0) -> None:
+                    ingest_status.update(label="Ingesting upload...", state="running")
+                    if total > 0:
+                        ingest_progress.progress(
+                            min(done / total, 1.0),
+                            text=f"{message} ({done}/{total} chunks)",
+                        )
+                    else:
+                        ingest_progress.progress(0, text=message)
+
+                written = _ingest_uploads(uploads, progress=show_ingest_progress)
+                ingest_progress.progress(1.0, text=f"Indexed {written} chunk(s)")
+                ingest_status.update(label="Ingest complete", state="complete", expanded=False)
                 _loaded_documents.clear()  # refresh the "Currently Loaded" list
                 st.session_state["ingest_msg"] = (
                     "ok",
@@ -324,38 +345,39 @@ def _render_ingest_sidebar() -> None:
         st.caption("No documents ingested yet.")
         return
 
-    # Table: Delete | Source | Chunks, dark-blue bordered (CSS scoped to key).
-    st.markdown(_LOADED_TABLE_CSS, unsafe_allow_html=True)
-    widths = [0.22, 0.56, 0.22]
-    with st.container(key="loaded-table"):
-        head = st.columns(widths)
-        head[0].markdown("**Delete**")
-        head[1].markdown("**Source**")
-        head[2].markdown("**Chunks**")
-        for name, n in loaded:
-            row = st.columns(widths)
-            clicked = row[0].button("✕", key=f"unload_{name}", help=f"Remove {name}")
-            row[1].write(name)
-            row[2].write(str(n))
-            if clicked:
-                try:
-                    removed = _unload_document(name)
-                    _loaded_documents.clear()
-                    st.session_state["ingest_msg"] = (
-                        "ok",
-                        f"Removed {name} ({removed} chunk(s)).",
-                    )
-                except Exception:  # noqa: BLE001 — generic message; detail to logs
-                    logger.exception("Unload failed")
-                    st.session_state["ingest_msg"] = (
-                        "err",
-                        "Remove failed. Check the server logs for details.",
-                    )
-                st.rerun()
+    table_rows = [{"Source": name, "Chunks": n} for name, n in loaded]
+    selection = st.dataframe(
+        table_rows,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        column_config={
+            "Source": st.column_config.TextColumn("Source"),
+            "Chunks": st.column_config.NumberColumn("Chunks", format="%d"),
+        },
+    )
+    selected_rows = selection.selection.rows
+    selected_name = table_rows[selected_rows[0]]["Source"] if selected_rows else None
+    button_label = f"Delete selected: {selected_name}" if selected_name else "Delete selected"
+    if st.button(button_label, disabled=selected_name is None, type="secondary"):
+        try:
+            removed = _unload_document(selected_name)
+            _loaded_documents.clear()
+            st.session_state["ingest_msg"] = (
+                "ok",
+                f"Removed {selected_name} ({removed} chunk(s)).",
+            )
+        except Exception:  # noqa: BLE001 — generic message; detail to logs
+            logger.exception("Unload failed")
+            st.session_state["ingest_msg"] = (
+                "err",
+                "Remove failed. Check the server logs for details.",
+            )
+        st.rerun()
 
 
 def main() -> None:
-    from corpus_rag.pipelines.query import run_query_reranked
+    from corpus_rag.pipelines.query import continue_reranked_answer, run_query_reranked
 
     # Quiet benign upstream tokenizer logs — only when the app actually runs, not
     # on import (so tests that import this module keep their warnings intact).
@@ -369,23 +391,94 @@ def main() -> None:
         _render_ingest_sidebar()
 
     query = st.chat_input("Ask a question about the corpus")
-    if not query:
+    if query:
+        try:
+            query_progress = st.empty()
+            query_progress.info("Starting RAG query...")
+            response_preview = st.empty()
+            streamed_answer: list[str] = []
+            finish_reasons: list[str | None] = []
+
+            def show_query_progress(message: str) -> None:
+                query_progress.info(message)
+
+            def show_generation_progress(text: str) -> None:
+                if not text:
+                    return
+                streamed_answer.append(text)
+                response_preview.markdown("".join(streamed_answer))
+
+            answer, sources = run_query_reranked(
+                query,
+                engine=_get_engine(),
+                progress=show_query_progress,
+                generation_progress=show_generation_progress,
+                finish_reason_callback=finish_reasons.append,
+            )
+            query_progress.success("RAG response ready")
+            response_preview.empty()
+            st.session_state["rag_result"] = {
+                "query": query,
+                "answer": answer,
+                "sources": sources,
+                "finish_reason": finish_reasons[0] if finish_reasons else None,
+            }
+        except Exception:  # noqa: BLE001 — show a generic message; detail goes to logs
+            # Never surface raw exception text in a clinical-facing UI: DB/LLM errors
+            # can embed the connection string (credentials) or other internals.
+            logger.exception("Query failed")
+            st.error("Query failed. Check the server logs for details.")
+            return
+
+    result = st.session_state.get("rag_result")
+    if not result:
         return
+
+    query = result["query"]
+    answer = result["answer"]
+    sources = result["sources"]
+    finish_reason = result.get("finish_reason")
 
     # Render the query as plain text (avoid interpreting Markdown in user input).
     st.write("**Query:**", query)
 
-    try:
-        with st.spinner("Retrieving, reranking, and generating…"):
-            answer, sources = run_query_reranked(query, engine=_get_engine())
-    except Exception:  # noqa: BLE001 — show a generic message; detail goes to logs
-        # Never surface raw exception text in a clinical-facing UI: DB/LLM errors
-        # can embed the connection string (credentials) or other internals.
-        logger.exception("Query failed")
-        st.error("Query failed. Check the server logs for details.")
-        return
-
     st.subheader("Response")
+    if _answer_may_be_incomplete(answer, finish_reason):
+        st.warning(
+            "The response appears incomplete. Use Continue response to request the "
+            "next grounded segment. If this repeats, increase LLM_MAX_TOKENS for "
+            "longer single-pass answers."
+        )
+        if st.button("Continue response", type="secondary"):
+            try:
+                continue_status = st.status("Continuing response...", expanded=True)
+                continuation_preview = st.empty()
+                continuation_chunks: list[str] = []
+                continuation_finish: list[str | None] = []
+
+                def show_continuation_progress(text: str) -> None:
+                    if not text:
+                        return
+                    continuation_chunks.append(text)
+                    continuation_preview.markdown(answer + "".join(continuation_chunks))
+
+                continuation = continue_reranked_answer(
+                    query,
+                    answer,
+                    sources,
+                    engine=_get_engine(),
+                    generation_progress=show_continuation_progress,
+                    finish_reason_callback=continuation_finish.append,
+                )
+                continue_status.update(label="Continuation ready", state="complete")
+                continuation_preview.empty()
+                answer = answer + continuation
+                finish_reason = continuation_finish[0] if continuation_finish else None
+                result.update({"answer": answer, "finish_reason": finish_reason})
+                st.rerun()
+            except Exception:  # noqa: BLE001 — generic UI, detail to logs
+                logger.exception("Continuation failed")
+                st.error("Continuation failed. Check the server logs for details.")
     if answer == ABSTENTION_ANSWER:
         st.warning(answer)
     else:

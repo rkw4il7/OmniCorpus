@@ -14,7 +14,12 @@ from unittest.mock import MagicMock
 import pytest
 from haystack import Document
 
-from corpus_rag.pipelines.query import RankedSource, run_query, run_query_reranked
+from corpus_rag.pipelines.query import (
+    RankedSource,
+    continue_reranked_answer,
+    run_query,
+    run_query_reranked,
+)
 from corpus_rag.prompts import ABSTENTION_ANSWER, RAG_PROMPT_TEMPLATE
 from corpus_rag.settings import Settings
 
@@ -177,6 +182,152 @@ def test_rerank_grounds_llm_on_top_k_only_but_returns_all_candidates() -> None:
     assert [d.id for d in sent] == [c.id, a.id]  # only top_k, in rerank order
     # used_for_grounding marks EXACTLY the chunks fed to the LLM (rerank order c,a,b).
     assert [s.used_for_grounding for s in sources] == [True, True, False]
+
+
+def test_rerank_reports_progress_steps() -> None:
+    a = Document(content="aaa", score=0.9)
+    b = Document(content="bbb", score=0.8)
+    engine = _rerank_engine([a, b], [(b, 0.95), (a, 0.30)], reply="from sources")
+
+    steps = []
+    run_query_reranked("q", engine=engine, settings=_settings(), progress=steps.append)
+
+    assert steps == [
+        "Embedding query",
+        "Retrieving candidate chunks",
+        "Reranking 2 candidate chunk(s)",
+        "Applying grounding gate",
+        "Building grounded prompt",
+        "Generating response",
+    ]
+
+
+def test_rerank_forwards_generation_stream_chunks() -> None:
+    a = Document(content="aaa", score=0.9)
+    engine = _rerank_engine([a], [(a, 0.95)], reply="from sources")
+
+    def _generate(prompt, streaming_callback=None):
+        assert prompt == "PROMPT"
+        streaming_callback(type("Chunk", (), {"content": "from "})())
+        streaming_callback(type("Chunk", (), {"content": "sources"})())
+        return {"replies": ["from sources"], "meta": [{"finish_reason": "stop"}]}
+
+    engine.generator.run.side_effect = _generate
+    chunks = []
+
+    answer, _ = run_query_reranked(
+        "q",
+        engine=engine,
+        settings=_settings(),
+        generation_progress=chunks.append,
+    )
+
+    assert answer == "from sources"
+    assert chunks == ["from ", "sources"]
+
+
+def test_rerank_uses_streamed_text_when_final_reply_is_empty() -> None:
+    a = Document(content="aaa", score=0.9)
+    engine = _rerank_engine([a], [(a, 0.95)], reply="unused")
+
+    def _generate(prompt, streaming_callback=None):
+        assert prompt == "PROMPT"
+        streaming_callback(type("Chunk", (), {"content": "streamed "})())
+        streaming_callback(type("Chunk", (), {"content": "answer"})())
+        return {"replies": [""], "meta": [{"finish_reason": "stop"}]}
+
+    engine.generator.run.side_effect = _generate
+
+    answer, sources = run_query_reranked(
+        "q",
+        engine=engine,
+        settings=_settings(),
+        generation_progress=lambda _text: None,
+    )
+
+    assert answer == "streamed answer"
+    assert sources[0].used_for_grounding is True
+
+
+def test_rerank_empty_final_reply_without_stream_abstains() -> None:
+    a = Document(content="aaa", score=0.9)
+    engine = _rerank_engine([a], [(a, 0.95)], reply="unused")
+    engine.generator.run.return_value = {"replies": [""], "meta": [{"finish_reason": "stop"}]}
+
+    answer, sources = run_query_reranked("q", engine=engine, settings=_settings())
+
+    assert answer == ABSTENTION_ANSWER
+    assert sources[0].used_for_grounding is True
+
+
+def test_rerank_prefers_streamed_text_over_shorter_final_reply() -> None:
+    a = Document(content="aaa", score=0.9)
+    engine = _rerank_engine([a], [(a, 0.95)], reply="unused")
+
+    def _generate(prompt, streaming_callback=None):
+        assert prompt == "PROMPT"
+        streaming_callback(type("Chunk", (), {"content": "complete streamed answer."})())
+        return {"replies": ["complete streamed"], "meta": [{"finish_reason": "stop"}]}
+
+    engine.generator.run.side_effect = _generate
+
+    answer, _ = run_query_reranked(
+        "q",
+        engine=engine,
+        settings=_settings(),
+        generation_progress=lambda _text: None,
+    )
+
+    assert answer == "complete streamed answer."
+
+
+def test_rerank_reports_finish_reason() -> None:
+    a = Document(content="aaa", score=0.9)
+    engine = _rerank_engine([a], [(a, 0.95)], reply="from sources")
+    engine.generator.run.return_value = {
+        "replies": ["from sources"],
+        "meta": [{"finish_reason": "length"}],
+    }
+    finish_reasons = []
+
+    run_query_reranked(
+        "q",
+        engine=engine,
+        settings=_settings(),
+        finish_reason_callback=finish_reasons.append,
+    )
+
+    assert finish_reasons == ["length"]
+
+
+def test_continue_reranked_answer_uses_grounded_sources_only() -> None:
+    used = Document(content="grounded", score=0.9)
+    unused = Document(content="not grounded", score=0.8)
+    sources = [
+        RankedSource(used, 1, 0.9, 1, 0.95, used_for_grounding=True),
+        RankedSource(unused, 2, 0.8, 2, 0.50, used_for_grounding=False),
+    ]
+    engine = _rerank_engine([], [])
+    engine.generator.run.return_value = {
+        "replies": [" completion"],
+        "meta": [{"finish_reason": "stop"}],
+    }
+    finish_reasons = []
+
+    continuation = continue_reranked_answer(
+        "q",
+        "partial",
+        sources,
+        engine=engine,
+        finish_reason_callback=finish_reasons.append,
+    )
+
+    prompt = engine.generator.run.call_args.kwargs["prompt"]
+    assert continuation == " completion"
+    assert "grounded" in prompt
+    assert "not grounded" not in prompt
+    assert "partial" in prompt
+    assert finish_reasons == ["stop"]
 
 
 def test_rerank_empty_query_abstains_without_running_engine() -> None:

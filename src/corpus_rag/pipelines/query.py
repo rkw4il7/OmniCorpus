@@ -17,6 +17,7 @@ order, always surfaced (even on abstention) so the UI shows what grounding exist
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING
@@ -30,7 +31,7 @@ from haystack_integrations.components.retrievers.pgvector import (
     PgvectorEmbeddingRetriever,
 )
 
-from corpus_rag.prompts import ABSTENTION_ANSWER, RAG_PROMPT_TEMPLATE
+from corpus_rag.prompts import ABSTENTION_ANSWER, CONTINUE_RAG_PROMPT_TEMPLATE, RAG_PROMPT_TEMPLATE
 from corpus_rag.settings import Settings, get_settings
 
 if TYPE_CHECKING:
@@ -38,6 +39,44 @@ if TYPE_CHECKING:
     from haystack_integrations.document_stores.pgvector import PgvectorDocumentStore
 
 logger = logging.getLogger(__name__)
+
+QueryProgress = Callable[[str], None]
+GenerationProgress = Callable[[str], None]
+FinishReasonCallback = Callable[[str | None], None]
+
+
+def _generation_callbacks(
+    generation_progress: GenerationProgress | None,
+) -> tuple[Callable | None, list[str]]:
+    streamed_chunks: list[str] = []
+    if generation_progress is None:
+        return None, streamed_chunks
+
+    def streaming_callback(chunk) -> None:
+        content = chunk.content or ""
+        if content:
+            streamed_chunks.append(content)
+            generation_progress(content)
+
+    return streaming_callback, streamed_chunks
+
+
+def _first_finish_reason(result: dict) -> str | None:
+    return (result.get("meta") or [{}])[0].get("finish_reason")
+
+
+def _generated_reply(result: dict, streamed_chunks: list[str]) -> str:
+    """Choose the most complete nonblank generated text available."""
+    candidates: list[str] = []
+    streamed = "".join(streamed_chunks)
+    if streamed.strip():
+        candidates.append(streamed)
+    for reply in result.get("replies") or []:
+        if isinstance(reply, str) and reply.strip():
+            candidates.append(reply)
+    if not candidates:
+        return ""
+    return max(candidates, key=len)
 
 
 def _warn_if_gate_open(settings: Settings) -> None:
@@ -58,7 +97,10 @@ def _build_generator(settings: Settings) -> OpenAIGenerator:
         api_key=Secret.from_token("not-needed-for-local-server"),
         model=settings.llm_model,
         api_base_url=settings.llm_base_url,
-        generation_kwargs={"temperature": 0},  # §7.7 reproducible answers
+        generation_kwargs={
+            "temperature": 0,  # §7.7 reproducible answers
+            "max_tokens": settings.llm_max_tokens,
+        },
         timeout=settings.llm_timeout,
     )
 
@@ -113,6 +155,9 @@ def run_query(
     *,
     engine: QueryEngine | None = None,
     settings: Settings | None = None,
+    progress: QueryProgress | None = None,
+    generation_progress: GenerationProgress | None = None,
+    finish_reason_callback: FinishReasonCallback | None = None,
 ) -> tuple[str, list[Document]]:
     """Run a grounded query, gating BEFORE generation (root §4.3, §2A).
 
@@ -133,9 +178,15 @@ def run_query(
     if not query.strip():
         return ABSTENTION_ANSWER, []
 
+    if progress:
+        progress("Embedding query")
     embedding = engine.text_embedder.run(text=query)["embedding"]
+    if progress:
+        progress("Retrieving source chunks")
     documents: list[Document] = engine.retriever.run(query_embedding=embedding)["documents"]
 
+    if progress:
+        progress("Applying grounding gate")
     # Grounding gate (§2A.3): drop chunks below the MIN_SCORE floor; abstain when
     # nothing remains — BEFORE the generator runs, so no ungrounded prose is ever
     # produced (not merely discarded).
@@ -145,14 +196,25 @@ def run_query(
     if not documents:
         return ABSTENTION_ANSWER, documents
 
+    if progress:
+        progress("Building grounded prompt")
     prompt = engine.prompt_builder.run(query=query, documents=documents)["prompt"]
-    replies = engine.generator.run(prompt=prompt).get("replies") or []
-    if not replies:
+    if progress:
+        progress("Generating response")
+    streaming_callback, streamed_chunks = _generation_callbacks(generation_progress)
+    result = engine.generator.run(
+        prompt=prompt,
+        streaming_callback=streaming_callback,
+    )
+    if finish_reason_callback:
+        finish_reason_callback(_first_finish_reason(result))
+    reply = _generated_reply(result, streamed_chunks)
+    if not reply:
         # Distinct from a grounding abstention: the LLM produced nothing (network
         # error, context overflow, refusal). Same return, but make it detectable.
         logger.warning("Generator returned no replies for query %r", query)
         return ABSTENTION_ANSWER, documents
-    return replies[0], documents
+    return reply, documents
 
 
 # --- reranking (post-retrieval) -----------------------------------------
@@ -232,6 +294,9 @@ def run_query_reranked(
     *,
     engine: RerankEngine | None = None,
     settings: Settings | None = None,
+    progress: QueryProgress | None = None,
+    generation_progress: GenerationProgress | None = None,
+    finish_reason_callback: FinishReasonCallback | None = None,
 ) -> tuple[str, list[RankedSource]]:
     """Run a grounded query with cross-encoder reranking.
 
@@ -248,7 +313,11 @@ def run_query_reranked(
     if not query.strip():
         return ABSTENTION_ANSWER, []
 
+    if progress:
+        progress("Embedding query")
     embedding = engine.text_embedder.run(text=query)["embedding"]
+    if progress:
+        progress("Retrieving candidate chunks")
     cosine_docs = engine.retriever.run(query_embedding=embedding)["documents"]
 
     # Snapshot cosine rank+score NOW (the ranker overwrites Document.score). Key
@@ -258,6 +327,8 @@ def run_query_reranked(
     # the retrieved set has unique ids — no collision to worry about here.
     cosine_by_id = {doc.id: (rank, doc.score) for rank, doc in enumerate(cosine_docs, start=1)}
 
+    if progress:
+        progress(f"Reranking {len(cosine_docs)} candidate chunk(s)")
     reranked_docs = engine.ranker.run(query=query, documents=cosine_docs)["documents"]
 
     ranked_sources = [
@@ -271,6 +342,8 @@ def run_query_reranked(
         for rerank_rank, doc in enumerate(reranked_docs, start=1)
     ]
 
+    if progress:
+        progress("Applying grounding gate")
     # Grounding gate (§2A.3) stays on the COSINE score (the MIN_SCORE floor is a
     # cosine threshold), independent of the rerank reordering.
     grounded = [
@@ -291,11 +364,64 @@ def run_query_reranked(
     used_ids = {id(rs) for rs in llm_sources}
     ranked_sources = [replace(rs, used_for_grounding=id(rs) in used_ids) for rs in ranked_sources]
 
+    if progress:
+        progress("Building grounded prompt")
     prompt = engine.prompt_builder.run(query=query, documents=[rs.document for rs in llm_sources])[
         "prompt"
     ]
-    replies = engine.generator.run(prompt=prompt).get("replies") or []
-    if not replies:
+    if progress:
+        progress("Generating response")
+    streaming_callback, streamed_chunks = _generation_callbacks(generation_progress)
+    result = engine.generator.run(
+        prompt=prompt,
+        streaming_callback=streaming_callback,
+    )
+    if finish_reason_callback:
+        finish_reason_callback(_first_finish_reason(result))
+    reply = _generated_reply(result, streamed_chunks)
+    if not reply:
         logger.warning("Generator returned no replies for query %r", query)
         return ABSTENTION_ANSWER, ranked_sources
-    return replies[0], ranked_sources
+    return reply, ranked_sources
+
+
+def continue_reranked_answer(
+    query: str,
+    partial_answer: str,
+    ranked_sources: list[RankedSource],
+    *,
+    engine: RerankEngine | None = None,
+    generation_progress: GenerationProgress | None = None,
+    finish_reason_callback: FinishReasonCallback | None = None,
+) -> str:
+    """Continue a length-truncated answer using the same grounded source chunks.
+
+    This is deliberately not a fresh retrieval. The continuation prompt receives
+    only the chunks already marked ``used_for_grounding`` so the safety boundary
+    remains the same as the original answer.
+    """
+    engine = engine or _default_rerank_engine()
+    grounded = [rs.document for rs in ranked_sources if rs.used_for_grounding]
+    if not grounded:
+        return ""
+
+    source_text = "\n".join(
+        f"[Source {i}]\n{doc.content}" for i, doc in enumerate(grounded, start=1)
+    )
+    prompt = (
+        CONTINUE_RAG_PROMPT_TEMPLATE.replace("__SOURCES__", source_text)
+        .replace("__QUESTION__", query)
+        .replace("__PARTIAL_ANSWER__", partial_answer)
+    )
+    streaming_callback, streamed_chunks = _generation_callbacks(generation_progress)
+    result = engine.generator.run(
+        prompt=prompt,
+        streaming_callback=streaming_callback,
+    )
+    if finish_reason_callback:
+        finish_reason_callback(_first_finish_reason(result))
+    reply = _generated_reply(result, streamed_chunks)
+    if not reply:
+        logger.warning("Generator returned no continuation for query %r", query)
+        return ""
+    return reply

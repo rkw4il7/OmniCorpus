@@ -11,6 +11,7 @@ from haystack import Document
 from corpus_rag.app import (
     _FIRST_LINE_MAX,
     ALLOWED_UPLOAD_TYPES,
+    _answer_may_be_incomplete,
     _score_str,
     _source_title,
     first_line,
@@ -125,3 +126,76 @@ def test_score_str_formats_score() -> None:
     assert _score_str(0.9942) == "0.9942"
     assert _score_str(0.99417) == "0.9942"  # rounded to 4 dp
     assert _score_str(None) == "n/a"
+
+
+def test_answer_may_be_incomplete_detects_token_limit_and_mid_sentence() -> None:
+    assert _answer_may_be_incomplete("Weight Management: Advise weight loss for", "stop")
+    assert _answer_may_be_incomplete("Complete sentence.", "length")
+    assert not _answer_may_be_incomplete("Complete sentence.", "stop")
+    assert not _answer_may_be_incomplete("Insufficient grounding in the corpus to answer.", None)
+
+
+def test_ingest_uploads_reports_progress_and_batches(monkeypatch, tmp_path) -> None:
+    """GUI ingest drives converter/embedder/writer directly for live progress."""
+    from haystack import Document
+
+    from corpus_rag import app
+
+    monkeypatch.setattr(app, "UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(
+        app,
+        "get_settings",
+        lambda: type("S", (), {"ingest_embed_batch_size": 2})(),
+    )
+
+    class _Upload:
+        name = "guide.pdf"
+
+        def getvalue(self):
+            return b"pdf-bytes"
+
+    class _Converter:
+        def run(self, sources, meta):
+            assert sources == [str(tmp_path / "guide.pdf")]
+            assert meta == [{"source": "guide.pdf"}]
+            return {
+                "documents": [
+                    Document(content="a", meta=meta[0]),
+                    Document(content="b", meta=meta[0]),
+                    Document(content="c", meta=meta[0]),
+                ]
+            }
+
+    class _Embedder:
+        def __init__(self):
+            self.batch_sizes = []
+
+        def run(self, documents):
+            self.batch_sizes.append(len(documents))
+            return {"documents": documents}
+
+    class _Writer:
+        def __init__(self):
+            self.batch_sizes = []
+
+        def run(self, documents):
+            self.batch_sizes.append(len(documents))
+            return {"documents_written": len(documents)}
+
+    embedder = _Embedder()
+    writer = _Writer()
+    components = type(
+        "Components",
+        (),
+        {"converter": _Converter(), "embedder": embedder, "writer": writer},
+    )()
+    monkeypatch.setattr(app, "_get_ingest_components", lambda: components)
+
+    progress_events = []
+    written = app._ingest_uploads([_Upload()], progress=lambda *args: progress_events.append(args))
+
+    assert written == 3
+    assert (tmp_path / "guide.pdf").read_bytes() == b"pdf-bytes"
+    assert embedder.batch_sizes == [2, 1]
+    assert writer.batch_sizes == [2, 1]
+    assert progress_events[-1] == ("Indexed 3 of 3 chunks", 3, 3)

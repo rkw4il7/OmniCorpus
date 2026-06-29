@@ -13,6 +13,7 @@ idempotent (OVERWRITE on the content-derived id).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from docling.chunking import HybridChunker
@@ -34,6 +35,15 @@ from corpus_rag.settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from haystack.document_stores.types import DocumentStore
+
+
+@dataclass(frozen=True)
+class IndexingComponents:
+    """The same components used by the indexing pipeline, exposed for GUI progress."""
+
+    converter: DoclingConverter
+    embedder: SentenceTransformersDocumentEmbedder
+    writer: DocumentWriter
 
 
 def build_converter(settings: Settings | None = None) -> DocumentConverter:
@@ -89,28 +99,45 @@ def build_indexing_pipeline(
     :param settings: Settings to read ``EMBED_MODEL_ID`` from; defaults to cached.
     :returns: A wired (un-warmed) Haystack ``Pipeline``.
     """
-    settings = settings or get_settings()
-
-    converter = DoclingConverter(
-        converter=build_converter(settings),
-        export_type=ExportType.DOC_CHUNKS,
-        chunker=build_chunker(settings.embed_model_id, token_margin=settings.chunk_token_margin),
-    )
-    embedder = SentenceTransformersDocumentEmbedder(model=settings.embed_model_id)
-    writer = DocumentWriter(
-        document_store=document_store,
-        policy=DuplicatePolicy.OVERWRITE,
-    )
+    components = build_indexing_components(document_store, settings)
 
     pipeline = Pipeline()
-    pipeline.add_component("converter", converter)
-    pipeline.add_component("embedder", embedder)
-    pipeline.add_component("writer", writer)
+    pipeline.add_component("converter", components.converter)
+    pipeline.add_component("embedder", components.embedder)
+    pipeline.add_component("writer", components.writer)
     # Explicit socket names: the embedder exposes both `documents` and `meta`
     # outputs, so auto-connect to the writer is ambiguous in Haystack 2.x.
     pipeline.connect("converter.documents", "embedder.documents")
     pipeline.connect("embedder.documents", "writer.documents")
     return pipeline
+
+
+def build_indexing_components(
+    document_store: DocumentStore,
+    settings: Settings | None = None,
+) -> IndexingComponents:
+    """Construct the Docling converter, document embedder, and store writer.
+
+    The CLI uses these through a Haystack ``Pipeline``. The Streamlit GUI uses the
+    components directly so it can report conversion and chunk-batch progress while
+    preserving the same conversion/chunking/embedding/write behavior.
+    """
+    settings = settings or get_settings()
+    converter = DoclingConverter(
+        converter=build_converter(settings),
+        export_type=ExportType.DOC_CHUNKS,
+        chunker=build_chunker(settings.embed_model_id, token_margin=settings.chunk_token_margin),
+    )
+    embedder = SentenceTransformersDocumentEmbedder(
+        model=settings.embed_model_id,
+        batch_size=settings.ingest_embed_batch_size,
+        progress_bar=False,
+    )
+    writer = DocumentWriter(
+        document_store=document_store,
+        policy=DuplicatePolicy.OVERWRITE,
+    )
+    return IndexingComponents(converter=converter, embedder=embedder, writer=writer)
 
 
 def run_indexing(

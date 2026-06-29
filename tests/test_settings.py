@@ -18,6 +18,7 @@ def test_defaults(clean_env) -> None:
     assert s.embedding_dim is None
     assert s.top_k == 10
     assert s.min_score == 0.35  # hard grounding gate ON by default (fail-safe)
+    assert s.ingest_embed_batch_size == 32
     assert s.ocr_on is True  # OCR on by default (clinical scans)
     assert s.upload_max_mb == 200
     assert s.llm_model == "local-model"
@@ -30,6 +31,7 @@ def test_env_overrides(clean_env) -> None:
     clean_env.setenv("EMBEDDING_DIM", "384")
     clean_env.setenv("TOP_K", "5")
     clean_env.setenv("MIN_SCORE", "0.25")
+    clean_env.setenv("INGEST_EMBED_BATCH_SIZE", "64")
     clean_env.setenv("LLM_BASE_URL", "http://llm:9000/v1")
     clean_env.setenv("LLM_MODEL", "qwen")
     clean_env.setenv("PG_CONN_STR", "postgresql://u:p@db:5432/x")
@@ -39,6 +41,7 @@ def test_env_overrides(clean_env) -> None:
     assert s.embedding_dim == 384
     assert s.top_k == 5
     assert s.min_score == 0.25
+    assert s.ingest_embed_batch_size == 64
     assert s.llm_base_url == "http://llm:9000/v1"
     assert s.llm_model == "qwen"
     assert s.pg_conn_str == "postgresql://u:p@db:5432/x"
@@ -99,17 +102,20 @@ def test_rerank_defaults(clean_env) -> None:
     assert s.rerank_candidates == 20
     assert s.rerank_model_id == "cross-encoder/ms-marco-MiniLM-L-6-v2"
     assert s.llm_timeout == 180
+    assert s.llm_max_tokens == 4096
 
 
 def test_rerank_and_timeout_env_overrides(clean_env) -> None:
     clean_env.setenv("RERANK_CANDIDATES", "30")
     clean_env.setenv("RERANK_MODEL_ID", "BAAI/bge-reranker-base")
     clean_env.setenv("LLM_TIMEOUT", "90")
+    clean_env.setenv("LLM_MAX_TOKENS", "2048")
 
     s = _settings()
     assert s.rerank_candidates == 30
     assert s.rerank_model_id == "BAAI/bge-reranker-base"
     assert s.llm_timeout == 90
+    assert s.llm_max_tokens == 2048
 
 
 def test_invalid_rerank_candidates_rejected(clean_env) -> None:
@@ -124,7 +130,19 @@ def test_invalid_llm_timeout_rejected(clean_env) -> None:
         _settings()
 
 
+def test_invalid_llm_max_tokens_rejected(clean_env) -> None:
+    clean_env.setenv("LLM_MAX_TOKENS", "0")
+    with pytest.raises(ValueError, match="LLM_MAX_TOKENS"):
+        _settings()
+
+
 def test_invalid_upload_max_mb_rejected(clean_env) -> None:
     clean_env.setenv("UPLOAD_MAX_MB", "0")
     with pytest.raises(ValueError, match="UPLOAD_MAX_MB"):
+        _settings()
+
+
+def test_invalid_ingest_embed_batch_size_rejected(clean_env) -> None:
+    clean_env.setenv("INGEST_EMBED_BATCH_SIZE", "0")
+    with pytest.raises(ValueError, match="INGEST_EMBED_BATCH_SIZE"):
         _settings()

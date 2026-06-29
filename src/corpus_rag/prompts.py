@@ -43,3 +43,28 @@ RETRIEVED SOURCES: (none)
 QUESTION: {{ query }}
 
 ANSWER:""".replace("__ABSTENTION__", ABSTENTION_ANSWER)
+
+
+CONTINUE_RAG_PROMPT_TEMPLATE = """\
+You are a clinical corpus assistant. Continue the PREVIOUS ANSWER using ONLY the
+RETRIEVED SOURCES below, plus basic, non-specific clinical concepts as connective
+reasoning.
+
+Hard rules:
+- Continue from exactly where the PREVIOUS ANSWER stopped. Do not restart the
+  answer or repeat completed sections unless repetition is needed to complete the
+  interrupted sentence.
+- Every specific clinical fact, value, dose, threshold, or claim MUST come from
+  the retrieved sources. NEVER use specific clinical knowledge from your own
+  training data.
+- Return only the continuation text.
+
+RETRIEVED SOURCES (most relevant first):
+__SOURCES__
+
+QUESTION: __QUESTION__
+
+PREVIOUS ANSWER:
+__PARTIAL_ANSWER__
+
+CONTINUATION:"""

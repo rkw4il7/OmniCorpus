@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     # room for the embedder's special tokens + a little headroom).
     chunk_token_margin: int = 16
 
+    # GUI/CLI ingest embedding batch size. Larger batches can improve throughput
+    # on accelerated hardware but use more memory.
+    ingest_embed_batch_size: int = 32
+
     # OCR during ingest (env: OCR_ON). On by default — a clinical corpus often
     # includes scanned/faxed pages, and missing their text silently is worse than
     # the extra ingest time. Set OCR_ON=false for born-digital-only corpora to
@@ -84,6 +88,9 @@ class Settings(BaseSettings):
     # Generous default: reasoning models emit long thinking traces and can take
     # well over the OpenAI client's 60s default before the first token.
     llm_timeout: int = 180
+    # Maximum generated answer tokens. Set explicitly so local OpenAI-compatible
+    # servers do not silently use a low default and cut responses off mid-sentence.
+    llm_max_tokens: int = 4096
 
     # Corpus origins: JSON array of {adapter, root|url, ...} objects.
     corpus_sources: list[SourceConfig] = Field(default_factory=list)
@@ -103,6 +110,8 @@ class Settings(BaseSettings):
             raise ValueError("MIN_SCORE must be in [0.0, 1.0] (cosine floor)")
         if self.chunk_token_margin < 0:
             raise ValueError("CHUNK_TOKEN_MARGIN must be >= 0")
+        if self.ingest_embed_batch_size < 1:
+            raise ValueError("INGEST_EMBED_BATCH_SIZE must be >= 1")
         if self.upload_max_mb < 1:
             raise ValueError("UPLOAD_MAX_MB must be >= 1")
         if self.upload_max_mb > _STREAMLIT_MAX_UPLOAD_MB:
@@ -117,6 +126,8 @@ class Settings(BaseSettings):
             raise ValueError("RERANK_CANDIDATES must be >= 1")
         if self.llm_timeout < 1:
             raise ValueError("LLM_TIMEOUT must be >= 1 (seconds)")
+        if self.llm_max_tokens < 1:
+            raise ValueError("LLM_MAX_TOKENS must be >= 1")
         return self
 
 
