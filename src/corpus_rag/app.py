@@ -40,13 +40,21 @@ ALLOWED_UPLOAD_TYPES = ["pdf", "docx", "pptx", "html", "htm", "md"]
 # the Streamlit process was launched from. (app.py is src/corpus_rag/app.py.)
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 
-# Streamlit generates accepted-types/size helper text inside the drop zone from
-# the same `type=` and max-upload settings we enforce elsewhere. Hide just that
-# repeated helper line; the input, drag/drop, and type validation remain intact.
+# Sidebar document-panel styling (targets Streamlit internal data-testids):
+# - Hide the drop zone's repeated accepted-types/size helper line; the input,
+#   drag/drop, and type validation remain intact.
+# - Center the drop zone's "Browse files" button horizontally.
+# - Center the "Delete selected" button (keyed container) horizontally.
 _UPLOAD_ZONE_CSS = """
 <style>
 .st-key-doc-upload [data-testid="stFileUploaderDropzoneInstructions"] {
     display: none;
+}
+.st-key-doc-upload section[data-testid="stFileUploaderDropzone"] {
+    justify-content: center;
+}
+.st-key-delete-center [data-testid="stButton"] {
+    text-align: center;
 }
 </style>
 """
@@ -345,7 +353,7 @@ def _render_ingest_sidebar() -> None:
     cap_mb = get_settings().upload_max_mb
     cap_bytes = cap_mb * 1024 * 1024
 
-    st.header("Documents")
+    st.header("Manage Documents")
     st.caption(
         f"Upload to ingest ({', '.join(ALLOWED_UPLOAD_TYPES)}). File Size Limit: {cap_mb} MB"
     )
@@ -361,12 +369,16 @@ def _render_ingest_sidebar() -> None:
     # on the next run, so the widget returns to its pre-upload state.
     round_ = st.session_state.setdefault("upload_round", 0)
     st.markdown(_UPLOAD_ZONE_CSS, unsafe_allow_html=True)
+    # Render the label as a subheader (matching "Sources Currently Loaded") and
+    # collapse the uploader's own small label so the heading is the only one.
+    st.subheader("Drag Files Here...")
     with st.container(key="doc-upload"):
         uploads = st.file_uploader(
             "Drag Files Here...",
             type=ALLOWED_UPLOAD_TYPES,
             accept_multiple_files=True,
             key=f"uploader_{round_}",
+            label_visibility="collapsed",
         )
     # Ingest immediately on upload — no separate button (it is implied).
     if uploads:
@@ -436,7 +448,9 @@ def _render_ingest_sidebar() -> None:
     selected_rows = selection.selection.rows
     selected_name = table_rows[selected_rows[0]]["Source"] if selected_rows else None
     button_label = f"Delete selected: {selected_name}" if selected_name else "Delete selected"
-    if st.button(button_label, disabled=selected_name is None, type="secondary"):
+    with st.container(key="delete-center"):
+        delete_clicked = st.button(button_label, disabled=selected_name is None, type="secondary")
+    if delete_clicked:
         try:
             removed = _unload_document(selected_name)
             _loaded_documents.clear()
