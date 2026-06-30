@@ -486,7 +486,7 @@ def _render_ingest_sidebar() -> None:
         button_label,
         disabled=selected_name is None,
         type="secondary",
-        use_container_width=True,
+        width="stretch",
     )
     if delete_clicked:
         try:
@@ -660,7 +660,7 @@ def main() -> None:
                     }
                     for s in grounded
                 ],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
