@@ -20,7 +20,9 @@ def quiet_noisy_upstream() -> None:
       cross-encoder truncate over-long inputs internally; the chunk-token budget
       already bounds what we control, so this is informational, not an error.
     """
-    # Scoped to transformers so an unrelated future warning mentioning the same
-    # word elsewhere isn't silently dropped.
-    warnings.filterwarnings("ignore", message=r".*tokenizer_kwargs.*", module=r"transformers.*")
+    # Match by MESSAGE only (no module scope). The deprecation is issued with a
+    # stacklevel that points into the CALLER (haystack / sentence-transformers),
+    # so a module=transformers filter misses it. The message text is specific
+    # enough that matching on it alone won't swallow unrelated warnings.
+    warnings.filterwarnings("ignore", message=r".*tokenizer_kwargs.*")
     logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
