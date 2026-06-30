@@ -239,5 +239,6 @@ uploads/
 .idea/workspace.xml
 .idea/usage.statistics.xml
 .idea/shelf/
-# Zencoder chat transcripts: per-session, large, not project config.
+# Zencoder AI-assistant artifacts: per-session, not shareable project config.
 .idea/zencoder/chats/
+.idea/zencoder-chat-index.xml
